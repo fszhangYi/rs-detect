@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>rs-detect · Web</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/antd@5.22.2/dist/reset.css" />
+  <script src="https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dayjs@1.11.13/dayjs.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/antd@5.22.2/dist/antd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.26.2/babel.min.js"></script>
+  <style>
+    body { margin: 0; background: #f5f5f5; }
+    .preview {
+      width: 100%; min-height: 280px; background: #111; object-fit: contain;
+      border-radius: 8px;
+    }
+    .lane-title { font-weight: 600; margin-bottom: 8px; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useEffect, useState, useRef } = React;
+    const {
+      Layout, Typography, Card, Row, Col, Button, Select, Space, message,
+      Tabs, Input, Form, Tag, Divider, Alert
+    } = antd;
+    const { Header, Content } = Layout;
+    const { Title, Text, Paragraph } = Typography;
+    const { TextArea } = Input;
+
+    const API = "";
+
+    async function api(path, opts = {}) {
+      const res = await fetch(API + path, {
+        headers: { "Content-Type": "application/json", ...(opts.headers || {}) },
+        ...opts,
+      });
+      if (!res.ok) {
+        let detail = await res.text();
+        try { detail = JSON.parse(detail).detail || detail; } catch (_) {}
+        throw new Error(detail || res.statusText);
+      }
+      const ct = res.headers.get("content-type") || "";
+      if (ct.includes("application/json")) return res.json();
+      return res;
+    }
+
+    function matToText(mat) {
+      return (mat || []).map(r => r.join(" ")).join("\n");
+    }
+    function textToMat(text) {
+      const rows = text.trim().split(/\n+/).map(line =>
+        line.replace(/,/g, " ").trim().split(/\s+/).map(Number)
+      ).filter(r => r.length);
+      if (rows.length !== 4 || rows.some(r => r.length !== 4 || r.some(Number.isNaN))) {
+        throw new Error("需要 4×4 数值矩阵");
+      }
+      return rows;
+    }
+
+    function CameraLane({ title, role, candidates, color }) {
+      const [serial, setSerial] = useState(undefined);
+      const [running, setRunning] = useState(false);
+      const [recording, setRecording] = useState(false);
+      const [tick, setTick] = useState(0);
+      const [intr, setIntr] = useState(null);
+
+      useEffect(() => {
+        if (!candidates?.length) return;
+        if (!serial) setSerial(candidates[0].serial);
+      }, [candidates]);
+
+      useEffect(() => {
+        if (!running || !serial) return;
+        const id = setInterval(() => setTick(t => t + 1), 200);
+        return () => clearInterval(id);
+      }, [running, serial]);
+
+      const start = async () => {
+        try {
+          await api("/api/stream/start", {
+            method: "POST",
+            body: JSON.stringify({ serial, role, width: 640, height: 480, fps: 30 }),
+          });
+          setRunning(true);
+          message.success(`${role} 出流已启动`);
+        } catch (e) { message.error(String(e.message || e)); }
+      };
+      const stop = async () => {
+        try {
+          if (recording) await api(`/api/record/stop?serial=${encodeURIComponent(serial)}`, { method: "POST" });
+          await api(`/api/stream/stop?serial=${encodeURIComponent(serial)}`, { method: "POST" });
+          setRecording(false);
+          setRunning(false);
+          message.info("已停止");
+        } catch (e) { message.error(String(e.message || e)); }
+      };
+      const snap = async () => {
+        try {
+          const r = await api(`/api/snapshot?serial=${encodeURIComponent(serial)}`, { method: "POST" });
+          message.success("已拍照: " + r.color);
+        } catch (e) { message.error(String(e.message || e)); }
+      };
+      const toggleRec = async () => {
+        try {
+          if (!recording) {
+            const r = await api(`/api/record/start?serial=${encodeURIComponent(serial)}`, { method: "POST" });
+            setRecording(true);
+            message.success("录像中: " + r.path);
+          } else {
+            const r = await api(`/api/record/stop?serial=${encodeURIComponent(serial)}`, { method: "POST" });
+            setRecording(false);
+            message.success(`已保存 ${r.path} (${r.frames} frames)`);
+          }
+        } catch (e) { message.error(String(e.message || e)); }
+      };
+      const loadIntr = async () => {
+        try {
+          const r = await api(`/api/intrinsics?serial=${encodeURIComponent(serial)}&from_live=${running}`);
+          setIntr(r);
+          message.success("内参已从 SDK 读取");
+        } catch (e) { message.error(String(e.message || e)); }
+      };
+
+      const src = running && serial
+        ? `/api/frame.jpg?serial=${encodeURIComponent(serial)}&which=color&t=${tick}`
+        : null;
+
+      return (
+        <Card title={<span className="lane-title">{title} <Tag color={color}>{role}</Tag></span>}
+              extra={running ? <Tag color="green">LIVE</Tag> : <Tag>IDLE</Tag>}>
+          <Space direction="vertical" style={{ width: "100%" }} size="middle">
+            <Select
+              style={{ width: "100%" }}
+              placeholder="选择相机"
+              value={serial}
+              onChange={setSerial}
+              options={(candidates || []).map(d => ({
+                value: d.serial,
+                label: `${d.name} [${d.serial}]${d.is_mock ? " (mock)" : ""}`,
+              }))}
+            />
+            <Space wrap>
+              <Button type="primary" onClick={start} disabled={!serial || running}>开始出流</Button>
+              <Button onClick={stop} disabled={!running}>停止</Button>
+              <Button onClick={snap} disabled={!running}>拍照</Button>
+              <Button danger={recording} onClick={toggleRec} disabled={!running}>
+                {recording ? "停止录像" : "开始录像"}
+              </Button>
+              <Button onClick={loadIntr} disabled={!serial}>读取内参</Button>
+            </Space>
+            {src
+              ? <img className="preview" src={src} alt="preview" />
+              : <div className="preview" style={{ color: "#888", display: "flex", alignItems: "center", justifyContent: "center" }}>无画面</div>}
+            {intr && (
+              <pre className="mono" style={{ maxHeight: 180, overflow: "auto", background: "#fafafa", padding: 8 }}>
+                {JSON.stringify(intr, null, 2)}
+              </pre>
+            )}
+          </Space>
+        </Card>
+      );
+    }
+
+    function ExtrinsicsPanel() {
+      const [form] = Form.useForm();
+      const load = async () => {
+        const data = await api("/api/extrinsics");
+        form.setFieldsValue({
+          d405_serial: data.d405?.serial || "",
+          d435_serial: data.d435?.serial || "",
+          d405_T: matToText(data.d405?.T),
+          d435_T: matToText(data.d435?.T),
+          notes: data.notes || "",
+        });
+      };
+      useEffect(() => { load().catch(e => message.error(String(e.message || e))); }, []);
+      const save = async () => {
+        try {
+          const v = await form.validateFields();
+          await api("/api/extrinsics", {
+            method: "PUT",
+            body: JSON.stringify({
+              d405_serial: v.d405_serial,
+              d435_serial: v.d435_serial,
+              d405_T: textToMat(v.d405_T),
+              d435_T: textToMat(v.d435_T),
+              notes: v.notes,
+            }),
+          });
+          message.success("外参已保存");
+        } catch (e) { message.error(String(e.message || e)); }
+      };
+      return (
+        <Card title="外参（用户输入）" extra={<Button onClick={load}>重新加载</Button>}>
+          <Alert type="info" showIcon style={{ marginBottom: 16 }}
+            message="内参由 RealSense SDK 自动获取；外参由用户填写并写入 config/extrinsics.yaml" />
+          <Form form={form} layout="vertical">
+            <Row gutter={16}>
+              <Col span={12}>
+                <Form.Item name="d405_serial" label="D405 序列号"><Input /></Form.Item>
+                <Form.Item name="d405_T" label="D405 T_flange_cam (4×4)"
+                  rules={[{ required: true }]}>
+                  <TextArea rows={5} className="mono" />
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item name="d435_serial" label="D435 序列号"><Input /></Form.Item>
+                <Form.Item name="d435_T" label="D435 T_base_cam (4×4)"
+                  rules={[{ required: true }]}>
+                  <TextArea rows={5} className="mono" />
+                </Form.Item>
+              </Col>
+            </Row>
+            <Form.Item name="notes" label="备注"><TextArea rows={2} /></Form.Item>
+            <Button type="primary" onClick={save}>保存外参</Button>
+          </Form>
+        </Card>
+      );
+    }
+
+    function App() {
+      const [scan, setScan] = useState({ wrist_candidates: [], scene_candidates: [] });
+      const refresh = async () => {
+        try {
+          const data = await api("/api/scan");
+          setScan(data);
+          message.success(`扫描到 ${data.devices?.length || 0} 台设备`);
+        } catch (e) { message.error(String(e.message || e)); }
+      };
+      useEffect(() => { refresh(); }, []);
+
+      const items = [
+        {
+          key: "cams",
+          label: "相机出流 (M1)",
+          children: (
+            <>
+              <Space style={{ marginBottom: 16 }}>
+                <Button type="primary" onClick={refresh}>自动扫描 RealSense</Button>
+                <Text type="secondary">D405 → 腕部待选区；D435 → 场景待选区。无硬件时提供 Mock。</Text>
+              </Space>
+              <Row gutter={16}>
+                <Col span={12}>
+                  <CameraLane title="腕部相机待选区（D405）" role="wrist"
+                    candidates={scan.wrist_candidates} color="orange" />
+                </Col>
+                <Col span={12}>
+                  <CameraLane title="场景相机待选区（D435）" role="scene"
+                    candidates={scan.scene_candidates} color="blue" />
+                </Col>
+              </Row>
+            </>
+          ),
+        },
+        {
+          key: "calib",
+          label: "标定 (M2)",
+          children: <ExtrinsicsPanel />,
+        },
+      ];
+
+      return (
+        <Layout style={{ minHeight: "100vh" }}>
+          <Header style={{ background: "#001529", display: "flex", alignItems: "center" }}>
+            <Title level={3} style={{ color: "#fff", margin: 0 }}>rs-detect</Title>
+            <Text style={{ color: "#aaa", marginLeft: 16 }}>PyQt Fluent · Web Ant Design · RealSense</Text>
+          </Header>
+          <Content style={{ padding: 24 }}>
+            <Tabs items={items} />
+          </Content>
+        </Layout>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>

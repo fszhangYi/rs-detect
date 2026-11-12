@@ -1,0 +1,1 @@
+"""PyQt + PyQtFluentWidgets desktop UI."""

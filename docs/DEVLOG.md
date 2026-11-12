@@ -1,0 +1,64 @@
+# rs-detect 开发过程记录
+
+> 约定：有可运行增量即 **及时 git commit**；本文件按时间追加，记录决策与验收。
+
+---
+
+## 2026-11-12 — 启动 M1 / M2 实现
+
+### 背景
+
+- 技术方案见 `suction_cardboard_plan.md`，总排期见 `development_plan.md`。
+- 本次按产品实现口径推进：
+  - **M1**：自动扫描 RealSense；D405→腕部待选区、D435→场景待选区；稳定出流；拍照；录像。
+  - **M2**：内参 SDK 自动获取；外参用户输入。
+- UI 技术栈：**PyQt + PyQtFluentWidgets + Web(Ant Design)**；Git 管控。
+
+### 本轮完成
+
+1. 初始化仓库骨架：`src/rs_detect`、`config/`、`web/public/`、`scripts/`、`docs/`。
+2. **相机层**
+   - `scanner.py`：枚举设备并按型号分路；无硬件时 Mock D405/D435。
+   - `streamer.py`：单串号稳定出流线程；Align 深度到彩色；Mock 动画画面。
+   - `recorder.py`：单帧拍照（color/depth/meta）+ mp4 录像。
+3. **标定层（M2）**
+   - 内参：从 live profile / 短开 pipeline 读 SDK intrinsics。
+   - 外参：`config/extrinsics.yaml`，桌面与 Web 均可编辑 4×4。
+4. **服务层** `DetectService`：桌面与 FastAPI 共用。
+5. **Web**：FastAPI `:8787` + Ant Design（CDN React）双栏出流 / 外参页。
+6. **桌面**：FluentWindow 双栏相机页 + 外参页。
+
+### 环境备注
+
+- 当前开发机 **未插 RealSense**，`rs-enumerate-devices` 为 0；联调走 Mock。
+- 本机已装 `pyrealsense2`、`PyQt-Fluent-Widgets`（项目 `.venv`，system-site-packages 复用系统 PyQt5）。
+- 系统 `sudo` 不可用，Web 前端采用 **Ant Design CDN 静态页**（`web/public`），避免强依赖本机 npm 构建；后续可再加 Vite 工程。
+
+### 验收清单（本轮）
+
+- [x] 扫描结果分为腕部 / 场景待选区
+- [x] 两路可独立出流（Mock）
+- [x] 拍照写入 `data/captures/`
+- [x] 录像写入 `data/recordings/`
+- [x] 内参接口返回 SDK/Mock 数值
+- [x] 外参可保存到 yaml
+- [x] 服务层 smoke：`SMOKE OK`（双路出流 + 拍照 + 录像 18 帧 + 内参 + 外参）
+- [x] Web API smoke：`/api/health` `/api/scan` `/api/stream/start` `/api/frame.jpg` `/api/snapshot` `/api/intrinsics` 均 200；首页 200
+- [ ] 真机 D405/D435 插上后复验（待现场）
+- [ ] 桌面 GUI 在有 DISPLAY 的工控机上复验
+
+### 后续
+
+- 真机 SN 写入 `config/cameras.yaml` preferred。
+- 外参与手眼标定流程对接 `calibration/`。
+- YOLO / 多视角融合按总方案下一阶段推进。
+
+---
+
+## Commit 对照
+
+| 时间 | 说明 |
+|------|------|
+| 2026-11-12 | chore: 初始化仓库与文档 |
+| 2026-11-12 | feat(M1): 扫描分路、出流、拍照录像 + 桌面/Web |
+| 2026-11-12 | feat(M2): SDK 内参 + 用户外参 |

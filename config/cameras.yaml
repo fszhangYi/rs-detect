@@ -1,0 +1,10 @@
+# Default stream profile
+color_width: 640
+color_height: 480
+fps: 30
+enable_depth: true
+
+# Optional preferred serials (filled after scan / user choice)
+preferred:
+  wrist_d405: ""
+  scene_d435: ""
