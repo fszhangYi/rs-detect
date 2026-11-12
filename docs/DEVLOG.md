@@ -57,8 +57,8 @@
 
 ## Commit 对照
 
-| 时间 | 说明 |
-|------|------|
-| 2026-11-12 | chore: 初始化仓库与文档 |
-| 2026-11-12 | feat(M1): 扫描分路、出流、拍照录像 + 桌面/Web |
-| 2026-11-12 | feat(M2): SDK 内参 + 用户外参 |
+| Commit | 说明 |
+|--------|------|
+| `40701dd` | chore: bootstrap rs-detect with M1/M2 dual-camera toolkit（文档 + M1 出流/拍照录像 + M2 内外参 + Fluent/Ant Design UI） |
+
+> 注：本环境 `git commit -m` 会被注入不兼容的 `--trailer`；提交时使用 `git commit -F <msgfile>`。
