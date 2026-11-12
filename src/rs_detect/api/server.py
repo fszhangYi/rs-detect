@@ -35,6 +35,12 @@ class StartStreamBody(BaseModel):
     fps: int = 30
 
 
+class BindSelectionBody(BaseModel):
+    role: str = Field(..., description="wrist | scene")
+    serial: str
+    persist: bool = True
+
+
 class ExtrinsicsBody(BaseModel):
     d405_T: Optional[List[List[float]]] = None
     d435_T: Optional[List[List[float]]] = None
@@ -51,6 +57,19 @@ def health():
 @app.get("/api/scan")
 def api_scan():
     return get_service().scan()
+
+
+@app.get("/api/selection")
+def api_get_selection():
+    return get_service().get_selection()
+
+
+@app.post("/api/selection")
+def api_bind_selection(body: BindSelectionBody):
+    try:
+        return get_service().bind_selection(body.role, body.serial, persist=body.persist)
+    except Exception as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @app.get("/api/streams")

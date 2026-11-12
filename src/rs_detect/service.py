@@ -27,6 +27,34 @@ class DetectService:
         self.extrinsics = ExtrinsicsStore(EXTRINSICS_PATH)
         self.snapshots = SnapshotWriter(CAPTURES_DIR)
         self._recorders: Dict[str, VideoRecorder] = {}
+        # M1→M2 binding: selected serials (wrist=D405, scene=D435)
+        ext = self.extrinsics.data
+        self._selection = {
+            "wrist": (ext.get("d405") or {}).get("serial") or None,
+            "scene": (ext.get("d435") or {}).get("serial") or None,
+        }
+
+    # ---- M1↔M2 selection binding ----
+    def get_selection(self) -> Dict[str, Any]:
+        return {
+            "wrist": self._selection.get("wrist") or "",
+            "scene": self._selection.get("scene") or "",
+            "d405_serial": self._selection.get("wrist") or "",
+            "d435_serial": self._selection.get("scene") or "",
+        }
+
+    def bind_selection(self, role: str, serial: str, persist: bool = True) -> Dict[str, Any]:
+        """Bind M1 chosen camera to M2 serial fields."""
+        if role not in ("wrist", "scene"):
+            raise ValueError("role must be wrist|scene")
+        serial = (serial or "").strip()
+        self._selection[role] = serial or None
+        if persist and serial:
+            if role == "wrist":
+                self.extrinsics.update(d405_serial=serial)
+            else:
+                self.extrinsics.update(d435_serial=serial)
+        return self.get_selection()
 
     # ---- M1 scan / stream ----
     def scan(self) -> Dict[str, Any]:
@@ -37,18 +65,21 @@ class DetectService:
             "wrist_candidates": [d.to_dict() for d in buckets["wrist_candidates"]],
             "scene_candidates": [d.to_dict() for d in buckets["scene_candidates"]],
             "unknown": [d.to_dict() for d in buckets["unknown"]],
+            "selection": self.get_selection(),
         }
 
     def start_stream(self, serial: str, role: str, width: int = 640, height: int = 480, fps: int = 30) -> dict:
         if role not in ("wrist", "scene"):
             raise ValueError("role must be wrist|scene")
         st = self.streams.start(serial, role=role, width=width, height=height, fps=fps, enable_depth=True)
+        selection = self.bind_selection(role, serial, persist=True)
         return {
             "serial": serial,
             "role": role,
             "running": st.running,
             "is_mock": st.is_mock,
             "intrinsics": fetch_intrinsics_from_streamer(st),
+            "selection": selection,
         }
 
     def stop_stream(self, serial: str) -> dict:

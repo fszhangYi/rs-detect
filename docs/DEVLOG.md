@@ -63,11 +63,22 @@
 
 ---
 
+## 2026-11-12 — M1/M2 联动与交互修正
+
+1. **M1→M2 序列号联动**：选定/出流时 `bind_selection` 写入服务状态与 `extrinsics.yaml` 的 serial；M2 序列号只读。
+2. **预览比例**：桌面 `AspectRatioPreview` letterbox；Web `aspect-ratio: 4/3` + `object-fit: contain`。
+3. **外参输入**：改为 4×4 数值格（桌面 `QDoubleSpinBox`，Web `InputNumber`），去掉纯文本矩阵。
+
+API 新增：`GET/POST /api/selection`。
+
+---
+
 ## Commit 对照
 
 | Commit | 说明 |
 |--------|------|
-| `40701dd` | chore: bootstrap rs-detect with M1/M2 dual-camera toolkit（文档 + M1 出流/拍照录像 + M2 内外参 + Fluent/Ant Design UI） |
+| `40701dd` | chore: bootstrap rs-detect with M1/M2 dual-camera toolkit |
 | `700743e` | docs: record initial commit hash and commit tips in DEVLOG |
+| `a3de169` | chore: add root start_web/start_desktop scripts with shared env |
 
 > 注：本环境 `git commit -m` 会被注入不兼容的 `--trailer`；提交时使用 `git commit -F <msgfile>`。

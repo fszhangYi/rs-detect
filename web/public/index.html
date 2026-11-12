@@ -12,27 +12,48 @@
   <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.26.2/babel.min.js"></script>
   <style>
     body { margin: 0; background: #f5f5f5; }
-    .preview {
-      width: 100%; min-height: 280px; background: #111; object-fit: contain;
+    .preview-box {
+      width: 100%;
+      aspect-ratio: 4 / 3;
+      background: #111;
       border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
     }
-    .lane-title { font-weight: 600; margin-bottom: 8px; }
+    .preview-box img {
+      max-width: 100%;
+      max-height: 100%;
+      width: auto;
+      height: auto;
+      object-fit: contain;
+      display: block;
+    }
+    .lane-title { font-weight: 600; }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+    .matrix-cell .ant-input-number { width: 100%; }
   </style>
 </head>
 <body>
   <div id="root"></div>
   <script type="text/babel">
-    const { useEffect, useState, useRef } = React;
+    const { useEffect, useState, useCallback } = React;
     const {
       Layout, Typography, Card, Row, Col, Button, Select, Space, message,
-      Tabs, Input, Form, Tag, Divider, Alert
+      Tabs, Input, Form, Tag, Alert, InputNumber
     } = antd;
     const { Header, Content } = Layout;
-    const { Title, Text, Paragraph } = Typography;
+    const { Title, Text } = Typography;
     const { TextArea } = Input;
 
     const API = "";
+    const IDENTITY = [
+      [1, 0, 0, 0],
+      [0, 1, 0, 0],
+      [0, 0, 1, 0],
+      [0, 0, 0, 1],
+    ];
 
     async function api(path, opts = {}) {
       const res = await fetch(API + path, {
@@ -49,21 +70,35 @@
       return res;
     }
 
-    function matToText(mat) {
-      return (mat || []).map(r => r.join(" ")).join("\n");
-    }
-    function textToMat(text) {
-      const rows = text.trim().split(/\n+/).map(line =>
-        line.replace(/,/g, " ").trim().split(/\s+/).map(Number)
-      ).filter(r => r.length);
-      if (rows.length !== 4 || rows.some(r => r.length !== 4 || r.some(Number.isNaN))) {
-        throw new Error("需要 4×4 数值矩阵");
-      }
-      return rows;
+    function MatrixGrid({ value, onChange }) {
+      const mat = value && value.length === 4 ? value : IDENTITY;
+      const setCell = (r, c, num) => {
+        const next = mat.map(row => row.slice());
+        next[r][c] = typeof num === "number" ? num : 0;
+        onChange(next);
+      };
+      return (
+        <div>
+          {[0,1,2,3].map(r => (
+            <Row gutter={6} key={r} style={{ marginBottom: 6 }}>
+              {[0,1,2,3].map(c => (
+                <Col span={6} key={c} className="matrix-cell">
+                  <InputNumber
+                    value={mat[r][c]}
+                    step={0.001}
+                    precision={6}
+                    style={{ width: "100%" }}
+                    onChange={(v) => setCell(r, c, v)}
+                  />
+                </Col>
+              ))}
+            </Row>
+          ))}
+        </div>
+      );
     }
 
-    function CameraLane({ title, role, candidates, color }) {
-      const [serial, setSerial] = useState(undefined);
+    function CameraLane({ title, role, candidates, color, serial, onSerialChange }) {
       const [running, setRunning] = useState(false);
       const [recording, setRecording] = useState(false);
       const [tick, setTick] = useState(0);
@@ -71,7 +106,7 @@
 
       useEffect(() => {
         if (!candidates?.length) return;
-        if (!serial) setSerial(candidates[0].serial);
+        if (!serial) onSerialChange(candidates[0].serial);
       }, [candidates]);
 
       useEffect(() => {
@@ -80,6 +115,17 @@
         return () => clearInterval(id);
       }, [running, serial]);
 
+      const bind = async (sn) => {
+        onSerialChange(sn);
+        if (!sn) return;
+        try {
+          await api("/api/selection", {
+            method: "POST",
+            body: JSON.stringify({ role, serial: sn, persist: true }),
+          });
+        } catch (e) { message.error(String(e.message || e)); }
+      };
+
       const start = async () => {
         try {
           await api("/api/stream/start", {
@@ -87,7 +133,7 @@
             body: JSON.stringify({ serial, role, width: 640, height: 480, fps: 30 }),
           });
           setRunning(true);
-          message.success(`${role} 出流已启动`);
+          message.success(`${role} 出流已启动；M2 序列号已联动`);
         } catch (e) { message.error(String(e.message || e)); }
       };
       const stop = async () => {
@@ -138,7 +184,7 @@
               style={{ width: "100%" }}
               placeholder="选择相机"
               value={serial}
-              onChange={setSerial}
+              onChange={bind}
               options={(candidates || []).map(d => ({
                 value: d.serial,
                 label: `${d.name} [${d.serial}]${d.is_mock ? " (mock)" : ""}`,
@@ -153,11 +199,13 @@
               </Button>
               <Button onClick={loadIntr} disabled={!serial}>读取内参</Button>
             </Space>
-            {src
-              ? <img className="preview" src={src} alt="preview" />
-              : <div className="preview" style={{ color: "#888", display: "flex", alignItems: "center", justifyContent: "center" }}>无画面</div>}
+            <div className="preview-box">
+              {src
+                ? <img src={src} alt="preview" />
+                : <span style={{ color: "#888" }}>无画面</span>}
+            </div>
             {intr && (
-              <pre className="mono" style={{ maxHeight: 180, overflow: "auto", background: "#fafafa", padding: 8 }}>
+              <pre className="mono" style={{ maxHeight: 160, overflow: "auto", background: "#fafafa", padding: 8 }}>
                 {JSON.stringify(intr, null, 2)}
               </pre>
             )}
@@ -166,73 +214,124 @@
       );
     }
 
-    function ExtrinsicsPanel() {
-      const [form] = Form.useForm();
+    function ExtrinsicsPanel({ selection }) {
+      const [d405T, setD405T] = useState(IDENTITY.map(r => r.slice()));
+      const [d435T, setD435T] = useState(IDENTITY.map(r => r.slice()));
+      const [notes, setNotes] = useState("");
+
       const load = async () => {
         const data = await api("/api/extrinsics");
-        form.setFieldsValue({
-          d405_serial: data.d405?.serial || "",
-          d435_serial: data.d435?.serial || "",
-          d405_T: matToText(data.d405?.T),
-          d435_T: matToText(data.d435?.T),
-          notes: data.notes || "",
-        });
+        setD405T((data.d405?.T || IDENTITY).map(r => r.slice()));
+        setD435T((data.d435?.T || IDENTITY).map(r => r.slice()));
+        setNotes(data.notes || "");
       };
       useEffect(() => { load().catch(e => message.error(String(e.message || e))); }, []);
+
       const save = async () => {
         try {
-          const v = await form.validateFields();
+          const d405_serial = selection?.d405_serial || selection?.wrist || "";
+          const d435_serial = selection?.d435_serial || selection?.scene || "";
+          if (!d405_serial || !d435_serial) {
+            throw new Error("请先在 M1 选定腕部/场景相机，序列号会自动联动到此处");
+          }
           await api("/api/extrinsics", {
             method: "PUT",
             body: JSON.stringify({
-              d405_serial: v.d405_serial,
-              d435_serial: v.d435_serial,
-              d405_T: textToMat(v.d405_T),
-              d435_T: textToMat(v.d435_T),
-              notes: v.notes,
+              d405_serial,
+              d435_serial,
+              d405_T: d405T,
+              d435_T: d435T,
+              notes,
             }),
           });
           message.success("外参已保存");
         } catch (e) { message.error(String(e.message || e)); }
       };
+
       return (
-        <Card title="外参（用户输入）" extra={<Button onClick={load}>重新加载</Button>}>
-          <Alert type="info" showIcon style={{ marginBottom: 16 }}
-            message="内参由 RealSense SDK 自动获取；外参由用户填写并写入 config/extrinsics.yaml" />
-          <Form form={form} layout="vertical">
-            <Row gutter={16}>
-              <Col span={12}>
-                <Form.Item name="d405_serial" label="D405 序列号"><Input /></Form.Item>
-                <Form.Item name="d405_T" label="D405 T_flange_cam (4×4)"
-                  rules={[{ required: true }]}>
-                  <TextArea rows={5} className="mono" />
-                </Form.Item>
-              </Col>
-              <Col span={12}>
-                <Form.Item name="d435_serial" label="D435 序列号"><Input /></Form.Item>
-                <Form.Item name="d435_T" label="D435 T_base_cam (4×4)"
-                  rules={[{ required: true }]}>
-                  <TextArea rows={5} className="mono" />
-                </Form.Item>
-              </Col>
-            </Row>
-            <Form.Item name="notes" label="备注"><TextArea rows={2} /></Form.Item>
-            <Button type="primary" onClick={save}>保存外参</Button>
-          </Form>
+        <Card
+          title="外参（用户输入）"
+          extra={
+            <Space>
+              <Button onClick={() => { setD405T(IDENTITY.map(r => r.slice())); setD435T(IDENTITY.map(r => r.slice())); }}>
+                复位单位阵
+              </Button>
+              <Button onClick={() => load().catch(e => message.error(String(e.message || e)))}>重新加载</Button>
+            </Space>
+          }
+        >
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message="序列号由 M1 选定相机自动联动（只读）。矩阵用 4×4 数值格填写，避免纯文本格式错误。"
+          />
+          <Row gutter={16} style={{ marginBottom: 16 }}>
+            <Col span={12}>
+              <Text type="secondary">D405 序列号（腕部）</Text>
+              <Input value={selection?.d405_serial || selection?.wrist || ""} readOnly placeholder="请在 M1 选择腕部相机" />
+            </Col>
+            <Col span={12}>
+              <Text type="secondary">D435 序列号（场景）</Text>
+              <Input value={selection?.d435_serial || selection?.scene || ""} readOnly placeholder="请在 M1 选择场景相机" />
+            </Col>
+          </Row>
+          <Row gutter={16}>
+            <Col span={12}>
+              <Text strong>D405 T_flange_cam</Text>
+              <div style={{ marginTop: 8 }}><MatrixGrid value={d405T} onChange={setD405T} /></div>
+            </Col>
+            <Col span={12}>
+              <Text strong>D435 T_base_cam</Text>
+              <div style={{ marginTop: 8 }}><MatrixGrid value={d435T} onChange={setD435T} /></div>
+            </Col>
+          </Row>
+          <div style={{ marginTop: 16 }}>
+            <Text type="secondary">备注</Text>
+            <TextArea rows={2} value={notes} onChange={e => setNotes(e.target.value)} />
+          </div>
+          <Button type="primary" style={{ marginTop: 16 }} onClick={save}>保存外参</Button>
         </Card>
       );
     }
 
     function App() {
       const [scan, setScan] = useState({ wrist_candidates: [], scene_candidates: [] });
+      const [selection, setSelection] = useState({ wrist: "", scene: "", d405_serial: "", d435_serial: "" });
+      const [wristSerial, setWristSerial] = useState(undefined);
+      const [sceneSerial, setSceneSerial] = useState(undefined);
+
+      const refreshSelection = useCallback(async () => {
+        const sel = await api("/api/selection");
+        setSelection(sel);
+        if (sel.wrist) setWristSerial(sel.wrist);
+        if (sel.scene) setSceneSerial(sel.scene);
+        return sel;
+      }, []);
+
       const refresh = async () => {
         try {
           const data = await api("/api/scan");
           setScan(data);
+          if (data.selection) {
+            setSelection(data.selection);
+            if (data.selection.wrist) setWristSerial(data.selection.wrist);
+            if (data.selection.scene) setSceneSerial(data.selection.scene);
+          }
           message.success(`扫描到 ${data.devices?.length || 0} 台设备`);
         } catch (e) { message.error(String(e.message || e)); }
       };
+
       useEffect(() => { refresh(); }, []);
+
+      const onWristSerial = async (sn) => {
+        setWristSerial(sn);
+        setSelection(s => ({ ...s, wrist: sn, d405_serial: sn }));
+      };
+      const onSceneSerial = async (sn) => {
+        setSceneSerial(sn);
+        setSelection(s => ({ ...s, scene: sn, d435_serial: sn }));
+      };
 
       const items = [
         {
@@ -242,16 +341,28 @@
             <>
               <Space style={{ marginBottom: 16 }}>
                 <Button type="primary" onClick={refresh}>自动扫描 RealSense</Button>
-                <Text type="secondary">D405 → 腕部待选区；D435 → 场景待选区。无硬件时提供 Mock。</Text>
+                <Text type="secondary">选定相机后自动写入 M2 序列号。预览按 4:3 等比 letterbox。</Text>
               </Space>
               <Row gutter={16}>
                 <Col span={12}>
-                  <CameraLane title="腕部相机待选区（D405）" role="wrist"
-                    candidates={scan.wrist_candidates} color="orange" />
+                  <CameraLane
+                    title="腕部相机待选区（D405）"
+                    role="wrist"
+                    candidates={scan.wrist_candidates}
+                    color="orange"
+                    serial={wristSerial}
+                    onSerialChange={onWristSerial}
+                  />
                 </Col>
                 <Col span={12}>
-                  <CameraLane title="场景相机待选区（D435）" role="scene"
-                    candidates={scan.scene_candidates} color="blue" />
+                  <CameraLane
+                    title="场景相机待选区（D435）"
+                    role="scene"
+                    candidates={scan.scene_candidates}
+                    color="blue"
+                    serial={sceneSerial}
+                    onSerialChange={onSceneSerial}
+                  />
                 </Col>
               </Row>
             </>
@@ -260,7 +371,7 @@
         {
           key: "calib",
           label: "标定 (M2)",
-          children: <ExtrinsicsPanel />,
+          children: <ExtrinsicsPanel selection={selection} />,
         },
       ];
 
@@ -271,7 +382,10 @@
             <Text style={{ color: "#aaa", marginLeft: 16 }}>PyQt Fluent · Web Ant Design · RealSense</Text>
           </Header>
           <Content style={{ padding: 24 }}>
-            <Tabs items={items} />
+            <Tabs
+              items={items}
+              onChange={(key) => { if (key === "calib") refreshSelection().catch(() => {}); }}
+            />
           </Content>
         </Layout>
       );
