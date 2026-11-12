@@ -1,8 +1,5 @@
 #!/usr/bin/env bash
+# Compat wrapper → project root start_desktop.sh
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-cd "$ROOT"
-# shellcheck disable=SC1091
-source "$ROOT/.venv/bin/activate"
-export PYTHONPATH="$ROOT/src:${PYTHONPATH:-}"
-exec python -m rs_detect.desktop.app
+exec "$ROOT/start_desktop.sh" "$@"

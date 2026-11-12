@@ -20,18 +20,26 @@ D435（场景）+ D405（腕部）双相机感知工具：扫描分路、稳定�
 
 ## 快速开始
 
-```bash
-cd /home/ubuntu/autodl-tmp/rs-detect
-source .venv/bin/activate
-export PYTHONPATH="$PWD/src:$PYTHONPATH"
+在项目根目录执行（脚本会自动 `source .venv`、设置 `PYTHONPATH` 等）：
 
-# Web UI（推荐先验证）
-./scripts/run_web.sh
+```bash
+cd /path/to/rs-detect
+
+# Web UI
+./start_web.sh
 # 浏览器打开 http://127.0.0.1:8787/
 
-# 桌面 Fluent UI（需图形界面）
-./scripts/run_desktop.sh
+# 桌面 Fluent UI（需图形界面 / DISPLAY）
+./start_desktop.sh
 ```
+
+可选环境变量：
+
+| 变量 | 默认 | 说明 |
+|------|------|------|
+| `RS_DETECT_WEB_HOST` | `0.0.0.0` | Web 绑定地址 |
+| `RS_DETECT_WEB_PORT` | `8787` | Web 端口 |
+| `QT_QPA_PLATFORM` | `xcb`（仅桌面脚本） | Qt 平台插件 |
 
 无实物相机时自动提供 **Mock D405/D435**，便于联调 UI 与存图/录像。
 
@@ -39,11 +47,13 @@ export PYTHONPATH="$PWD/src:$PYTHONPATH"
 
 ```text
 rs-detect/
+├── start_web.sh      # 根目录启动 Web（推荐）
+├── start_desktop.sh  # 根目录启动桌面（推荐）
 ├── config/           # cameras.yaml, extrinsics.yaml
 ├── data/captures/    # 拍照
 ├── data/recordings/  # 录像 mp4
 ├── docs/             # 方案 / 计划 / DEVLOG
-├── scripts/          # 启动脚本
+├── scripts/env.sh    # 公共环境
 ├── src/rs_detect/    # Python 包
 └── web/public/       # Ant Design Web UI
 ```

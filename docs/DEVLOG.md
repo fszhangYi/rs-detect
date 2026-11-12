@@ -55,10 +55,19 @@
 
 ---
 
+## 2026-11-12 — 根目录启动脚本
+
+- 新增 `start_web.sh` / `start_desktop.sh`（项目根目录）。
+- 公共环境：`scripts/env.sh`（激活 `.venv`、`PYTHONPATH=src`、弱化 conda 干扰、Web host/port）。
+- `scripts/run_*.sh` 改为转发到根目录脚本，保持兼容。
+
+---
+
 ## Commit 对照
 
 | Commit | 说明 |
 |--------|------|
 | `40701dd` | chore: bootstrap rs-detect with M1/M2 dual-camera toolkit（文档 + M1 出流/拍照录像 + M2 内外参 + Fluent/Ant Design UI） |
+| `700743e` | docs: record initial commit hash and commit tips in DEVLOG |
 
 > 注：本环境 `git commit -m` 会被注入不兼容的 `--trailer`；提交时使用 `git commit -F <msgfile>`。
