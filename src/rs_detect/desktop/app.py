@@ -342,16 +342,16 @@ class CameraLaneWidget(QWidget):
 
 
 class ExtrinsicsPage(QWidget):
-    """M2: serials locked from M1; 4×4 grid editors for T."""
+    """M1: serials locked from M0; 4×4 grid editors for T."""
 
     def __init__(self, service: DetectService, parent=None):
         super().__init__(parent)
         self.service = service
         self.setObjectName("extrinsics")
         layout = QVBoxLayout(self)
-        layout.addWidget(SubtitleLabel("外参配置（用户输入）"))
+        layout.addWidget(SubtitleLabel("外参配置（M1）"))
         layout.addWidget(
-            BodyLabel("序列号由 M1 选定相机自动联动（只读）。矩阵用 4×4 数值格填写，单位米，行主序。")
+            BodyLabel("序列号由 M0 选定相机自动联动（只读）。矩阵用 4×4 数值格填写，单位米，行主序。")
         )
 
         form = QFormLayout()
@@ -436,7 +436,7 @@ class ExtrinsicsPage(QWidget):
                 "notes": self.notes.toPlainText().strip(),
             }
             if not payload["d405_serial"] or not payload["d435_serial"]:
-                raise ValueError("请先在 M1 相机出流页选定腕部/场景相机，序列号会自动填入")
+                raise ValueError("请先在 M0 相机出流页选定腕部/场景相机，序列号会自动填入")
             self.service.set_extrinsics(payload)
             InfoBar.success(
                 "已保存",
@@ -447,6 +447,161 @@ class ExtrinsicsPage(QWidget):
             )
         except Exception as exc:
             InfoBar.error("保存失败", str(exc), parent=self.window(), position=InfoBarPosition.TOP)
+
+
+class DetectPage(QWidget):
+    """M2 plan flow: D435 coarse → D405 fine → gate (no depth blend)."""
+
+    def __init__(self, service: DetectService, parent=None):
+        super().__init__(parent)
+        self.service = service
+        self.setObjectName("detect")
+        self._show_role = "scene"
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(SubtitleLabel("检测通路（M2）"))
+        layout.addWidget(
+            BodyLabel(
+                "按方案：D435 粗定位给出 p_coarse（导航/门控）→ D405 精定位给出吸点 → 一致性门控。"
+                "禁止两相机深度平均。请先在 M0 同时出流腕部+场景。"
+            )
+        )
+
+        row = QHBoxLayout()
+        self.method_combo = ComboBox(self)
+        for label, data in [
+            ("auto", "auto"),
+            ("yolo", "yolo"),
+            ("hsv", "hsv"),
+            ("mock", "mock"),
+        ]:
+            self.method_combo.addItem(label, userData=data)
+        self.btn_pipeline = PrimaryPushButton(FluentIcon.PLAY, "运行 粗→精→门控")
+        self.btn_coarse = PushButton(FluentIcon.SEARCH, "仅 D435 粗定位")
+        self.btn_fine = PushButton(FluentIcon.CAMERA, "仅 D405 精定位")
+        self.viz_combo = ComboBox(self)
+        self.viz_combo.addItem("预览 D435 粗", userData="scene")
+        self.viz_combo.addItem("预览 D405 精", userData="wrist")
+        row.addWidget(BodyLabel("方法"))
+        row.addWidget(self.method_combo)
+        row.addWidget(self.btn_pipeline)
+        row.addWidget(self.btn_coarse)
+        row.addWidget(self.btn_fine)
+        row.addWidget(self.viz_combo)
+        row.addStretch(1)
+        layout.addLayout(row)
+
+        self.preview = AspectRatioPreview(self, ratio=4.0 / 3.0)
+        layout.addWidget(self.preview, 1)
+        self.result = TextEdit()
+        self.result.setReadOnly(True)
+        self.result.setMaximumHeight(200)
+        layout.addWidget(self.result)
+
+        self.btn_pipeline.clicked.connect(self.run_pipeline)
+        self.btn_coarse.clicked.connect(self.run_coarse_only)
+        self.btn_fine.clicked.connect(self.run_fine_only)
+        self.viz_combo.currentIndexChanged.connect(self._refresh_viz)
+
+    def _method(self) -> str:
+        return self.method_combo.currentData() or "auto"
+
+    def _show_payload(self, payload: dict, prefer_role: str = "scene") -> None:
+        import json
+
+        self.result.setPlainText(json.dumps(payload, indent=2, ensure_ascii=False))
+        self._show_role = prefer_role
+        # sync combo without re-entrancy issues
+        idx = 0 if prefer_role == "scene" else 1
+        if self.viz_combo.currentIndex() != idx:
+            self.viz_combo.setCurrentIndex(idx)
+        else:
+            self._refresh_viz()
+
+    def _refresh_viz(self) -> None:
+        role = self.viz_combo.currentData() or self._show_role
+        sel = self.service.get_selection()
+        serial = sel.get("scene") if role == "scene" else sel.get("wrist")
+        if not serial:
+            return
+        viz = self.service.get_detect_viz_jpeg(serial)
+        if not viz:
+            return
+        arr = np.frombuffer(viz, dtype=np.uint8)
+        img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        if img is not None:
+            h, w = img.shape[:2]
+            self.preview.set_frame(numpy_bgr_to_qpixmap(img), src_w=w, src_h=h)
+
+    def run_pipeline(self) -> None:
+        try:
+            payload = self.service.run_m2_pipeline(method=self._method())
+            self._show_payload(payload, prefer_role="scene")
+            gate = payload.get("gate") or {}
+            if payload.get("ok"):
+                InfoBar.success(
+                    "粗→精完成",
+                    f"gate_ok dist={gate.get('distance_m')}",
+                    parent=self.window(),
+                    position=InfoBarPosition.TOP,
+                    duration=3500,
+                )
+            else:
+                InfoBar.warning(
+                    "管线未通过",
+                    payload.get("message") or gate.get("gate_reason") or "",
+                    parent=self.window(),
+                    position=InfoBarPosition.TOP,
+                    duration=5000,
+                )
+        except Exception as exc:
+            InfoBar.error("管线失败", str(exc), parent=self.window(), position=InfoBarPosition.TOP)
+
+    def run_coarse_only(self) -> None:
+        try:
+            payload = self.service.run_coarse(method=self._method())
+            self._show_payload(payload, prefer_role="scene")
+            if payload.get("ok"):
+                InfoBar.success(
+                    "粗定位 OK",
+                    f"p_coarse={payload.get('p_coarse')}",
+                    parent=self.window(),
+                    position=InfoBarPosition.TOP,
+                    duration=3500,
+                )
+            else:
+                InfoBar.warning(
+                    "粗定位失败",
+                    payload.get("message", ""),
+                    parent=self.window(),
+                    position=InfoBarPosition.TOP,
+                    duration=4000,
+                )
+        except Exception as exc:
+            InfoBar.error("粗定位失败", str(exc), parent=self.window(), position=InfoBarPosition.TOP)
+
+    def run_fine_only(self) -> None:
+        try:
+            payload = self.service.run_fine(method=self._method())
+            self._show_payload(payload, prefer_role="wrist")
+            if payload.get("ok"):
+                InfoBar.success(
+                    "精定位 OK",
+                    f"c_star={payload.get('c_star')}",
+                    parent=self.window(),
+                    position=InfoBarPosition.TOP,
+                    duration=3500,
+                )
+            else:
+                InfoBar.warning(
+                    "精定位失败",
+                    payload.get("message", ""),
+                    parent=self.window(),
+                    position=InfoBarPosition.TOP,
+                    duration=4000,
+                )
+        except Exception as exc:
+            InfoBar.error("精定位失败", str(exc), parent=self.window(), position=InfoBarPosition.TOP)
 
 
 class CamerasPage(QWidget):
@@ -481,13 +636,20 @@ class MainWindow(FluentWindow):
 
         self.cameras_page = CamerasPage(service, self)
         self.extrinsics_page = ExtrinsicsPage(service, self)
+        self.detect_page = DetectPage(service, self)
         self.cameras_page.selectionChanged.connect(self.extrinsics_page.on_selection_changed)
 
-        self.addSubInterface(self.cameras_page, FluentIcon.CAMERA, "相机出流")
+        self.addSubInterface(self.cameras_page, FluentIcon.CAMERA, "相机出流 (M0)")
         self.addSubInterface(
             self.extrinsics_page,
             FluentIcon.LIBRARY,
-            "外参标定",
+            "外参标定 (M1)",
+            position=NavigationItemPosition.SCROLL,
+        )
+        self.addSubInterface(
+            self.detect_page,
+            FluentIcon.SEARCH,
+            "检测通路 (M2)",
             position=NavigationItemPosition.SCROLL,
         )
 

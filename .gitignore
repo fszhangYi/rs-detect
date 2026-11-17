@@ -1,4 +1,5 @@
 .venv/
+.venv312/
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -10,15 +11,35 @@ build/
 node_modules/
 web/dist/
 web/.vite/
+models/**
+!models/.gitkeep
+*.pt
+*.onnx
 *.log
 .DS_Store
 data/captures/**
 !data/captures/.gitkeep
+data/capture/
+data/captures.bak/
 data/recordings/**
 !data/recordings/.gitkeep
+data/yolo/images/**
+!data/yolo/images/**/.gitkeep
+data/yolo/labels/**
+!data/yolo/labels/**/.gitkeep
 data/raw/
+data/yolo_seg/
+runs/
+# Local multi-repo symlink / bulky SDKs (not part of this app tree)
+/sensors
+/vendor/
 *.bag
 .idea/
 .vscode/
 *.mp4
 !docs/**/*.png
+.rs_detect_restart
+# Machine-local asset symlinks (sensors-arm / CAD downloads)
+web/assets/models
+web/assets/vendor
+web/assets/scene/*.stl

@@ -1,0 +1,57 @@
+{
+  "name": "g26562 cell scene overlay",
+  "url": "/assets/scene/g26562-01-00_asm.stl",
+  "hires_url": "/assets/scene/g26562-01-00_asm.stl",
+  "units_of_file": "mm",
+  "notes": "Full-res scene STL. Overlay separate from URDF. Pose restored from user manual fine-tune.",
+  "enabled": true,
+  "opacity": 0.32,
+  "color": "#7a93ad",
+  "scale": 0.001,
+  "align": {
+    "base_in_scene_mm": [
+      487.54,
+      109.64,
+      12.0
+    ],
+    "yaw_deg": 0.0,
+    "method": "user seed + soft-overlap-area gradient (Three.js XYZ Euler)",
+    "confidence": "high",
+    "metrics": {
+      "med_mm": 1.672444582123731,
+      "f3": 0.783,
+      "f5": 0.9114166666666667,
+      "f10": 0.9773333333333334,
+      "med_bot_mm": 2.00535476387499,
+      "f5_bot": 0.8390026714158504,
+      "f10_bot": 0.961353517364203,
+      "soft_cover": 0.8959037589402484,
+      "soft_cover2": 0.8156402523931688,
+      "iou": 0.42402826855123676,
+      "n_in_bbox": 12695
+    },
+    "seed_metrics": {
+      "med_mm": 3.450692194147447,
+      "f3": 0.40708333333333335,
+      "f5": 0.6861666666666667,
+      "f10": 0.8791666666666667,
+      "med_bot_mm": 4.7868113268125,
+      "f5_bot": 0.5187889581478183,
+      "f10_bot": 0.7729296527159395,
+      "soft_cover": 0.7215905070488451,
+      "soft_cover2": 0.7162055955563797,
+      "iou": 0.24751737835153922,
+      "n_in_bbox": 12431
+    }
+  },
+  "offset_m": [
+    0.1917,
+    -0.1672,
+    -0.8409
+  ],
+  "offset_rpy_deg": [
+    88.47,
+    -88.66,
+    0.06
+  ]
+}

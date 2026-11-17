@@ -1,0 +1,13 @@
+# M2 detection config
+method: auto          # auto | yolo | hsv | mock
+# Fine-tuned weights (after Train tab: yolo11n-seg on data/yolo_seg).
+# Bootstrap: models/yolo11n-seg.pt → install best as cardboard_yolo.pt
+weights: models/cardboard_yolo.pt
+device: cpu            # cpu | 0 | 0,1 — AutoDL GPU 机器可改为 0
+conf: 0.15              # cardboard_yolo often peaks ~0.20–0.70; 0.25 missed mock frame
+imgsz: 640
+# Dataset classes: cardboard, white plastic frame — keep cardboard for grasp ROI
+class_filter: [cardboard]  # empty = keep all YOLO classes
+depth_scale: 0.001
+ransac_thresh_m: 0.008
+max_points: 20000

@@ -1,0 +1,15 @@
+# Static RGB-D frames for Grasp mock uploads (no RealSense hardware).
+# Paths are relative to the repo root. Color + depth + meta required for grasp.
+notes: >
+  Source: data/capture/336222075436_20261116_203908_347_{color,depth,meta}.
+  Scene (d435) and wrist (d405) both reuse this RGB-D pair for mock (as requested).
+
+d405:
+  color: data/capture/336222075436_20261116_203908_347_color.png
+  depth: data/capture/336222075436_20261116_203908_347_depth.png
+  meta: data/capture/336222075436_20261116_203908_347_meta.json
+
+d435:
+  color: data/capture/336222075436_20261116_203908_347_color.png
+  depth: data/capture/336222075436_20261116_203908_347_depth.png
+  meta: data/capture/336222075436_20261116_203908_347_meta.json

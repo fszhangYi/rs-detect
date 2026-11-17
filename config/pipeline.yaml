@@ -1,0 +1,21 @@
+# M2+ pipeline thresholds (plan: D435 coarse → D405 fine → gate)
+work_distance_m: 0.25          # wrist observe hint along coarse normal
+safe_z_lift_m: 0.08            # p_safe = p_coarse + [0,0,z_lift] in base (safety hover)
+pregrasp_z_lift_m: 0.05        # p_pregrasp = c_star + [0,0,z_lift] (fine hover)
+fine_max_iters: 5
+fine_pos_tol_m: 0.005          # XY error to stop servo loop
+fine_settle_s: 0.35            # wait after each move before re-detect
+max_gate_distance_m: 0.08      # ||c* - p_coarse|| in base
+max_gate_normal_angle_deg: 25
+skip_fine_if_coarse_fails: true
+# Until robot FK is wired (M4), assume flange at identity for base transform of D405
+assume_flange_identity: true
+
+# M3 multi-view fusion (wrist D405)
+multiview_n: 5                 # viewpoints including center (plan 3–5)
+multiview_radius_m: 0.03       # XY ring radius ~3 cm
+multiview_settle_s: 0.35       # short stop per view
+multiview_voxel_m: 0.004       # voxel size for cloud fuse
+multiview_min_views_ok: 2      # need ≥K successful views (else best-single fallback)
+multiview_min_points: 80       # fused cloud size floor
+multiview_move_pregrasp: true  # after fuse, move TCP to p_pregrasp once

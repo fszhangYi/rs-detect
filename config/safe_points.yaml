@@ -1,0 +1,14 @@
+version: 1
+points:
+- name: a
+  xyz:
+  - 0.4
+  - 0.05
+  - 0.5
+- name: b
+  xyz:
+  - 0.38
+  - 0.08
+  - 0.52
+- name: home
+  home: true

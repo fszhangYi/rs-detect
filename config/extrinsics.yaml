@@ -1,45 +1,85 @@
 version: 1
 units: meters_radians_row_major_4x4
-notes: 'User-provided extrinsics. D405: T_flange_cam (eye-in-hand). D435: T_base_cam.'
+notes: 'D405: T_flange_cam (eye-in-hand). D435: T_base_cam. d435 from canvas d435_a
+  offset_m=[0.009, 0.787, 0.728] rpy_ThreejsXYZ=[180.0, -1.5, 89.5]; CAD mesh frame≈cam
+  (optical offset not applied).'
 d405:
-  serial: ''
+  serial: MOCK_D405_0001
   frame_from: flange
-  frame_to: d405_color_optical
+  frame_to: d405_cad
   T:
-  - - 1.0
-    - 0.0
-    - 0.0
-    - 0.0
+  - - 0.99999389
+    - 0.00219192
+    - 0.00272437
+    - 0.00060532
+  - - -0.00347629
+    - 0.70718529
+    - 0.70701972
+    - -0.0891418
+  - - -0.0003769
+    - -0.70702487
+    - 0.70718859
+    - 0.10896361
   - - 0.0
-    - 1.0
-    - 0.0
-    - 0.0
-  - - 0.0
-    - 0.0
-    - 1.0
-    - 0.0
-  - - 0.0
     - 0.0
     - 0.0
     - 1.0
+  source:
+    camera_overlay_id: d405_a
+    offset_m:
+    - 0.434
+    - 0.162
+    - 0.414
+    offset_rpy_deg_threejs_XYZ:
+    - -174.0
+    - -33.5
+    - 96.0
+    arm_pose: home_joints_rad
+    tcp_xyz:
+    - 0.0
+    - 0.0
+    - 0.117
+    t_flange_cam_m:
+    - 0.000605
+    - -0.089142
+    - 0.108964
+    rpy_xyz_extrinsic_deg:
+    - -44.993
+    - 0.022
+    - -0.199
 d435:
-  serial: ''
+  serial: MOCK_D435_0001
   frame_from: base
-  frame_to: d435_color_optical
+  frame_to: d435_cad
   T:
-  - - 1.0
-    - 0.0
-    - 0.0
-    - 0.0
+  - - 0.008723545132608715
+    - -0.9996192610877435
+    - -0.026176948307873156
+    - 0.009
+  - - -0.9999619230641712
+    - -0.008726535498373919
+    - -1.231653667943533e-16
+    - 0.787
+  - - -0.00022843406864763056
+    - 0.026175951569892247
+    - -0.9996573249755571
+    - 0.728
   - - 0.0
-    - 1.0
-    - 0.0
-    - 0.0
-  - - 0.0
-    - 0.0
-    - 1.0
-    - 0.0
-  - - 0.0
     - 0.0
     - 0.0
     - 1.0
+  source:
+    camera_overlay_id: d435_a
+    offset_m: &id001
+    - 0.009
+    - 0.787
+    - 0.728
+    offset_rpy_deg_threejs_XYZ:
+    - 180.0
+    - -1.5
+    - 89.5
+    t_base_cam_m: *id001
+    rpy_xyz_extrinsic_deg:
+    - 178.5
+    - 0.013
+    - -89.5

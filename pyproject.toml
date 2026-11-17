@@ -20,6 +20,15 @@ dependencies = [
   "pyrealsense2",
 ]
 
+[project.optional-dependencies]
+# Prefer CPU wheels on machines without NVIDIA driver:
+#   pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision
+#   pip install -e ".[yolo]"
+# On AutoDL GPU hosts, install CUDA torch from pytorch.org first, then this extra.
+yolo = [
+  "ultralytics>=8.3.0",
+]
+
 [project.scripts]
 rs-detect-desktop = "rs_detect.desktop.app:main"
 rs-detect-web = "rs_detect.api.server:main"

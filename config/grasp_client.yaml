@@ -1,0 +1,27 @@
+base_url: http://127.0.0.1:6006
+timeout_s: 60.0
+sam_text: white plastic part
+hole_sam_text: large rectangular hole opening
+offset_along_normal_mm: 5.0
+normal_direction: 1
+s0_along_normal_m: 0.07
+depth_scale: 1000.0
+include_s1: true
+prefer_hole_tcp: true
+execute_motion: false
+force_without_s2_exit: false
+use_mock_frames: true
+mock_scene_id: '336222075436_20261116_204231_558'
+mock_wrist_id: __stock__
+s2_hz: 10.0
+s2_max_steps: 600
+insert_total_m: 0.012
+step_m: 0.002
+linear_speed_m_s: 0.004
+direction_sign: 1
+pause_ms_between_steps: 80
+retreat_m: 0.05
+gripper_width_m_open: 0.08
+gripper_width_m_closed: 0.0
+s0_flip_approach: true
+s0_j6_rad: 1.57

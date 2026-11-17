@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <title>rs-detect · Web</title>
+    <style>
+      html, body { margin: 0; background: #f5f5f5; }
+      #boot {
+        min-height: 100vh;
+        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      #boot .bar {
+        height: 64px;
+        background: #001529;
+        color: #fff;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 0 24px;
+        box-sizing: border-box;
+      }
+      #boot .bar strong { font-size: 20px; font-weight: 600; }
+      #boot .bar span { color: #aaa; font-size: 14px; }
+      #boot .body {
+        padding: 48px 24px;
+        color: #8c8c8c;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      #boot .spin {
+        width: 18px; height: 18px;
+        border: 2px solid #d9d9d9;
+        border-top-color: #1677ff;
+        border-radius: 50%;
+        animation: boot-spin .7s linear infinite;
+      }
+      @keyframes boot-spin { to { transform: rotate(360deg); } }
+    </style>
+  </head>
+  <body>
+    <div id="root">
+      <div id="boot">
+        <div class="bar">
+          <strong>rs-detect</strong>
+          <span>相机 · 标定 · 检测 · Cell C 臂控</span>
+        </div>
+        <div class="body">
+          <div class="spin" aria-hidden="true"></div>
+          <div>正在加载界面…</div>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

@@ -4,12 +4,12 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, Optional, Tuple
 
 import cv2
 import numpy as np
 
-from .models import FramePacket
+from .models import FramePacket, Intrinsics
 from .streamer import CameraStreamer
 
 logger = logging.getLogger(__name__)
@@ -19,10 +19,88 @@ def _stamp() -> str:
     return datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
 
 
+def _intrinsics_for_aligned_depth(packet: FramePacket) -> Optional[Intrinsics]:
+    """Prefer color intrinsics: streamer aligns depth → color before packaging."""
+    if packet.color_intrinsics is not None:
+        return packet.color_intrinsics
+    return packet.depth_intrinsics
+
+
+def depth_color_to_xyzrgb(
+    depth_u16: np.ndarray,
+    color_bgr: np.ndarray,
+    intrinsics: Intrinsics,
+    *,
+    depth_scale: float = 0.001,
+    min_depth_m: float = 0.05,
+    max_depth_m: float = 5.0,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Back-project valid depth pixels → (Nx3 xyz meters, Nx3 rgb uint8)."""
+    if depth_u16 is None or color_bgr is None:
+        return np.zeros((0, 3), dtype=np.float32), np.zeros((0, 3), dtype=np.uint8)
+    if depth_u16.shape[:2] != color_bgr.shape[:2]:
+        raise ValueError(
+            f"depth shape {depth_u16.shape[:2]} != color shape {color_bgr.shape[:2]} "
+            "(expect aligned depth→color)"
+        )
+    h, w = depth_u16.shape[:2]
+    z_raw = depth_u16.astype(np.float64)
+    z = z_raw * float(depth_scale)
+    valid = (z_raw > 0) & (z >= min_depth_m) & (z <= max_depth_m)
+    vs, us = np.where(valid)
+    if vs.size == 0:
+        return np.zeros((0, 3), dtype=np.float32), np.zeros((0, 3), dtype=np.uint8)
+    zz = z[vs, us]
+    xx = (us.astype(np.float64) - float(intrinsics.ppx)) * zz / float(intrinsics.fx)
+    yy = (vs.astype(np.float64) - float(intrinsics.ppy)) * zz / float(intrinsics.fy)
+    xyz = np.column_stack([xx, yy, zz]).astype(np.float32)
+    # OpenCV BGR → RGB for PLY consumers
+    bgr = color_bgr[vs, us]
+    rgb = bgr[:, ::-1].astype(np.uint8)
+    return xyz, rgb
+
+
+def write_ply_xyzrgb(path: Path, xyz: np.ndarray, rgb: np.ndarray) -> int:
+    """Write ASCII PLY with x y z + RGB. Returns point count."""
+    n = int(xyz.shape[0])
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    header = (
+        "ply\n"
+        "format ascii 1.0\n"
+        f"element vertex {n}\n"
+        "property float x\n"
+        "property float y\n"
+        "property float z\n"
+        "property uchar red\n"
+        "property uchar green\n"
+        "property uchar blue\n"
+        "end_header\n"
+    )
+    with path.open("w", encoding="utf-8") as f:
+        f.write(header)
+        if n == 0:
+            return 0
+        # Vectorized formatting is faster than per-point write for ~1e5 pts
+        lines = np.column_stack(
+            [
+                xyz[:, 0],
+                xyz[:, 1],
+                xyz[:, 2],
+                rgb[:, 0].astype(np.int32),
+                rgb[:, 1].astype(np.int32),
+                rgb[:, 2].astype(np.int32),
+            ]
+        )
+        np.savetxt(f, lines, fmt="%.6f %.6f %.6f %d %d %d")
+    return n
+
+
 class SnapshotWriter:
-    def __init__(self, root: Path):
+    def __init__(self, root: Path, *, depth_scale: float = 0.001):
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
+        self.depth_scale = float(depth_scale)
 
     def save(self, packet: FramePacket, prefix: str = "") -> dict:
         ts = _stamp()
@@ -31,14 +109,42 @@ class SnapshotWriter:
         meta_path = self.root / f"{base}_meta.json"
         cv2.imwrite(str(color_path), packet.color_bgr)
         depth_path = None
+        ply_path = None
+        npy_path = None
+        point_count = 0
         if packet.depth_u16 is not None:
             depth_path = self.root / f"{base}_depth.png"
             cv2.imwrite(str(depth_path), packet.depth_u16)
-        meta = {
+            intr = _intrinsics_for_aligned_depth(packet)
+            if intr is not None:
+                try:
+                    xyz, rgb = depth_color_to_xyzrgb(
+                        packet.depth_u16,
+                        packet.color_bgr,
+                        intr,
+                        depth_scale=self.depth_scale,
+                    )
+                    ply_path = self.root / f"{base}_cloud.ply"
+                    point_count = write_ply_xyzrgb(ply_path, xyz, rgb)
+                    # Compact float32 xyz companion for code that prefers numpy
+                    npy_path = self.root / f"{base}_cloud_xyz.npy"
+                    np.save(str(npy_path), xyz)
+                except Exception as exc:  # noqa: BLE001
+                    logger.exception("point cloud save failed: %s", exc)
+                    ply_path = None
+                    npy_path = None
+                    point_count = 0
+            else:
+                logger.warning("skip point cloud: missing intrinsics for serial=%s", packet.serial)
+        meta: Dict[str, Any] = {
             "serial": packet.serial,
             "timestamp_ms": packet.timestamp_ms,
             "color": str(color_path.name),
             "depth": depth_path.name if depth_path else None,
+            "point_cloud_ply": ply_path.name if ply_path else None,
+            "point_cloud_xyz_npy": npy_path.name if npy_path else None,
+            "point_count": point_count,
+            "depth_scale": self.depth_scale,
             "color_intrinsics": packet.color_intrinsics.to_dict() if packet.color_intrinsics else None,
             "depth_intrinsics": packet.depth_intrinsics.to_dict() if packet.depth_intrinsics else None,
         }
@@ -46,6 +152,9 @@ class SnapshotWriter:
         return {
             "color": str(color_path),
             "depth": str(depth_path) if depth_path else None,
+            "point_cloud": str(ply_path) if ply_path else None,
+            "point_cloud_xyz": str(npy_path) if npy_path else None,
+            "point_count": point_count,
             "meta": str(meta_path),
         }
 

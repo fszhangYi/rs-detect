@@ -1,0 +1,9 @@
+enabled: true
+notes: Drawn primitives (box/sphere/cylinder) in arm base (ROS Z-up, meters). Same
+  Rx(-90°) as robot / cameras. Layers are editable collections of shapes.
+active_layer_id: layer_1
+layers:
+- id: layer_1
+  label: 绘制层 1
+  enabled: true
+  shapes: []

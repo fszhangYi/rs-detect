@@ -1,0 +1,81 @@
+version: 1
+dry_run: true
+arm:
+  id: arm-c
+  label: Cell C · CS66 G26562
+  model: elite_cs66_g26562
+  brand: Elite
+  product: CS66
+  robot_ip: 192.168.1.200
+  port: 30001
+  primary_port: 30001
+  kind: arm_cs_write
+  kinematics: cs66_kin_g26562
+  kinematics_profile: elite_cs66
+  num_joints: 6
+  max_delta_deg: 2.0
+  enforce_soft_limits: true
+  headless_mode: true
+  require_rtsi: true
+  stream_max_rad_s: 0.5
+  cmd_continuity_rad: 0.1
+  servoj_time: 0.01
+  servoj_lookahead_time: 0.25
+  servoj_gain: 300
+  servoj_timeout_ms: 2000
+  idle_timeout_ms: 30000
+  keepalive_s: 2.0
+  rtsi_output_recipe: rtsi/output_recipe.txt
+  rtsi_input_recipe: rtsi/input_recipe.txt
+  rtsi_frequency: 125.0
+  # Flange → fingertip pads (EFG body ends ~0.117 = 指根; fingertip STL tip ~0.192).
+  tcp_xyz:
+  - 0.0
+  - 0.0
+  - 0.192
+  home_joints_rad:
+  - 3.1980228625405087
+  - -1.9760219324365658
+  - 1.9200727831369175
+  - -1.7135739560867584
+  - 4.730374221454287
+  - 0.1535647334914455
+  joint_names:
+  - joint1
+  - joint2
+  - joint3
+  - joint4
+  - joint5
+  - joint6
+  joint_offset_rad:
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  joint_signs:
+  - 1.0
+  - 1.0
+  - 1.0
+  - 1.0
+  - 1.0
+  - 1.0
+  mirror_y: false
+  gripper_rpy:
+  - 0.0
+  - 0.0
+  - 3.141592653589793
+  urdf: /assets/models/cs66/cs66_cell_c.urdf?v=cell-c-rs-detect-1
+arm_abs_ramp:
+  t_min_s: 0.1
+  t_max_s: 8.0
+  v_norm_rad_s: 0.35
+  ramp_hz: 30.0
+  cs_ramp_hz: 50.0
+servo:
+  observe_distance_m: 0.25
+  coarse_settle_s: 0.4
+  fine_max_iters: 8
+  fine_pos_tol_m: 0.004
+  fine_step_gain: 0.6

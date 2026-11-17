@@ -1,0 +1,40 @@
+{
+  "serial": "337122074288",
+  "timestamp_ms": 1794558649469.3494,
+  "color": "337122074288_20261113_163049_487_color.png",
+  "depth": "337122074288_20261113_163049_487_depth.png",
+  "color_intrinsics": {
+    "width": 640,
+    "height": 480,
+    "fx": 605.3128662109375,
+    "fy": 605.0584106445312,
+    "ppx": 322.0347900390625,
+    "ppy": 248.20318603515625,
+    "model": "distortion.inverse_brown_conrady",
+    "coeffs": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "stream": "color"
+  },
+  "depth_intrinsics": {
+    "width": 640,
+    "height": 480,
+    "fx": 391.0147705078125,
+    "fy": 391.0147705078125,
+    "ppx": 319.41583251953125,
+    "ppy": 242.33787536621094,
+    "model": "distortion.brown_conrady",
+    "coeffs": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "stream": "depth"
+  }
+}

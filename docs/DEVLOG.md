@@ -73,6 +73,86 @@ API 新增：`GET/POST /api/selection`。
 
 ---
 
+## 2026-11-13 — 路线纠正：先 Cell C 臂控 + Three.js，再感知闭环
+
+用户明确主路径（对齐 sensors-arm Cell C / sensors-dcs huiling+CS66）：
+
+1. **机械臂控制 + Three.js 3D 画布**（准确显示 FK / 可下发）
+2. D435 粗定位 → **下发运动到粗观测点**
+3. D405 精定位 ↔ 臂运动 **闭环**，直到抓取点收敛
+
+### 本轮已落地（步骤 1）
+
+- 配置：`config/robot_cell_c.yaml`（home / tcp=0.117 / cs66_kin_g26562 / URDF cell_c）
+- 适配器：`motion/arm_adapter.py` dry-run Connect→Arm→Home/关节下发 + FK/IK（`sensors_arm.arm_pose`）
+- 资源：`web/assets` → symlink sensors-arm `vendor` + `models/cs66`
+- 页面：主 SPA Tab「机械臂 (Cell C)」+ 前端路由 `/#/arm`（Three.js URDF）
+- 修复：Tab 轮询导致 useEffect 反复销毁 Three/URDF；改为仅 `active` 依赖 + App 级 URDF/STL 预加载
+- 旧 `/arm.html` 仅 redirect → `/#/arm`
+- API：`/api/arm/{state,connect,arm,disarm,home,command,move_pose,ik}`
+- Web 启动优先 `.venv312`（Python 3.12；hik-sensors 需 ≥3.10）
+- 闭环骨架占位：`pipeline/servo_loop.py`（待臂控验收后再接）
+
+### M2 Steps UI（进行中）
+
+- 检测 Tab 改为 Ant Design `Steps` 流程
+- **Step1**：D435 拍照粗定位 → `p_coarse` → `p_safe = p_coarse+[0,0,Δz]`
+- **Step2**：按钮「运动到安全点 p_safe」→ `CellCArmAdapter.move_xyz_keep_rpy`
+- **Step3**：按钮「开始精定位闭环」→ D405 测 `c*` → `p_pregrasp=c*+[0,0,Δz]` → 运动 → 再测至 XY 收敛
+- **Step4**：按钮「抓取（占位）」→ 吸盘 ON（占位 IO）
+- **Step5**：安全点列表编辑 / 保存 /「下发依次运动」（`config/safe_points.yaml`）
+- **Step6**：按钮「放开吸盘」→ 吸盘 OFF（占位）
+- API：`/api/pipeline/{…,grasp,safe_points,safe_points/run,suction/release,workflow}`
+
+### M3 多视角融合（已落地骨架）
+
+- `motion/viewpoint.py`：N 视点环
+- `pipeline/multiview_capture.py` + `multiview_fuse.py`：到位→短停→抓帧→体素/平面融合
+- `geometry/voxel_fuse.py` / `plane_fuse.py`：点云融合 + 平面一致性 + 交叉验证
+- Step3 主按钮「多视角精定位（M3）」；单帧闭环保留为备用
+- API：`POST /api/pipeline/multiview`；配置见 `config/pipeline.yaml` `multiview_*`
+- 评测模板：`docs/metrics_m3.md`
+
+### 下一步
+
+- M3 真机重复性填表；弱交叉验证时的补采策略加固
+- M4：门控强制进抓取、真 FK、下降、吸盘 IO
+- 接 live `arm_cs_write`（192.168.1.200）
+
+---
+
+## 2026-11-13 — 算法 M2：单帧检测通路落地
+
+### 本轮完成
+
+1. **检测 / 几何模块**
+   - `detect/detector.py`：YOLO（可选）/ HSV / Mock ROI 统一入口
+   - `geometry/mask_to_cloud.py`：Mask + Align 深度反投影
+   - `geometry/plane_ransac.py`：RANSAC 平面 + 吸点（相机系，法向朝向相机）
+   - `detect/pipeline.py`：单帧管线 + 可视化 JPEG
+2. **按方案主路径（D435 粗 → D405 精 → 门控）**
+   - `pipeline/coarse_localize.py`：`p_coarse` / `n_coarse`（base）+ 腕部观测 hint
+   - `pipeline/fine_localize.py`：D405 单帧 `c*`（M3 再融多视）
+   - `pipeline/gate.py`：`||c*-p_coarse||` / 法向角门控（不平均深度）
+   - `pipeline/m2_pipeline.py` + `DetectService.run_m2_pipeline`
+   - API：`/api/pipeline/{m2,coarse,fine,last}`；UI 主按钮「粗→精→门控」
+3. **配置 / CLI**：`config/pipeline.yaml`；`scripts/run_m2_pipeline.py`；单帧 CLI 保留作调试
+4. **里程碑文案**：M0 出流 · M1 外参 · M2 检测；Mock 平面纸板便于 smoke
+
+### 验收（Mock）
+
+- [x] `run_m2_pipeline`：先出 `p_coarse`，再 D405 `c_star`，门控通过
+- [x] 粗失败可按配置跳过精定位
+- [ ] 真机 + 自训 YOLO + 真实 `T_base_flange` 复验（待现场）
+
+### 后续
+
+- M2.1/M2.2：纸板样张与 `models/cardboard_yolo.pt`
+- M3：多视角融合（替换单帧 fine）
+- M4：接入臂 FK 提供真实 `T_base_flange`
+
+---
+
 ## Commit 对照
 
 | Commit | 说明 |
@@ -80,5 +160,6 @@ API 新增：`GET/POST /api/selection`。
 | `40701dd` | chore: bootstrap rs-detect with M1/M2 dual-camera toolkit |
 | `700743e` | docs: record initial commit hash and commit tips in DEVLOG |
 | `a3de169` | chore: add root start_web/start_desktop scripts with shared env |
+| `3a20d21` | fix(ui): link M1 selection to M2 serials, fix preview ratio, matrix grid extrinsics |
 
 > 注：本环境 `git commit -m` 会被注入不兼容的 `--trailer`；提交时使用 `git commit -F <msgfile>`。

@@ -1,0 +1,67 @@
+{
+  "version": 1,
+  "units": "meters_radians_row_major_4x4",
+  "notes": "User-provided extrinsics. D405: T_flange_cam (eye-in-hand). D435: T_base_cam.",
+  "d405": {
+    "serial": "",
+    "frame_from": "flange",
+    "frame_to": "d405_color_optical",
+    "T": [
+      [
+        1,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        1,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        1,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        1
+      ]
+    ]
+  },
+  "d435": {
+    "serial": "",
+    "frame_from": "base",
+    "frame_to": "d435_color_optical",
+    "T": [
+      [
+        1,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        1,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        1,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        1
+      ]
+    ]
+  }
+}
