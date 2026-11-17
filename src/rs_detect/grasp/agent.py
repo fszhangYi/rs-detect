@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import logging
 import math
 import threading
@@ -11,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Deque, Dict, List, Optional, Sequence, Tuple
 
+import cv2
 import numpy as np
 import yaml
 from scipy.spatial.transform import Rotation
@@ -25,7 +27,7 @@ from rs_detect.grasp.frame_pack import (
     pack_frame_upload,
 )
 from rs_detect.grasp.site_pack import build_site_configure_payload, normalize_site_configure_payload
-from rs_detect.grasp.viz import encode_jpeg, render_hole_viz, render_s0_viz
+from rs_detect.grasp.viz import encode_jpeg, render_hole_viz, render_materials_viz, render_s0_viz
 from rs_detect.paths import GRASP_CLIENT_CONFIG_PATH
 
 logger = logging.getLogger(__name__)
@@ -106,6 +108,8 @@ class GraspAgent:
         self._s2_running = False
         self._s2_stats: Dict[str, Any] = {}
         self._hole: Optional[Dict[str, Any]] = None
+        self._materials: List[Dict[str, Any]] = []
+        self._material_selected_id: Optional[int] = None
         self._s0: Optional[Dict[str, Any]] = None
         self._final: Optional[Dict[str, Any]] = None
         self._pregrasp_target: Optional[Dict[str, Any]] = None
@@ -197,11 +201,16 @@ class GraspAgent:
             packed = pack_frame_upload(pkt, depth_scale=depth_scale, require_depth=require_depth)
             packed["_meta"] = {"role": role, "serial": serial, "source": "live"}
 
-        # Cache raw color for Hole/S0 overlays (client-side viz).
+        # Cache raw color/depth for Hole/S0 overlays + material-crop hole detect.
+        depth = None
+        if getattr(pkt, "depth_u16", None) is not None:
+            depth = np.asarray(pkt.depth_u16).copy()
         with self._lock:
             self._frame_cache[role] = {
                 "color_bgr": np.asarray(pkt.color_bgr).copy(),
+                "depth_u16": depth,
                 "intrinsics": dict(packed.get("color_intrinsics") or {}),
+                "depth_scale": float(packed.get("depth_scale") or depth_scale),
                 "serial": packed.get("_meta", {}).get("serial") or pkt.serial,
                 "source": packed.get("_meta", {}).get("source"),
                 "captured_at": _utc_iso(),
@@ -214,7 +223,7 @@ class GraspAgent:
         return {k: v for k, v in packed.items() if not k.startswith("_")}
 
     def _build_viz(self, kind: str) -> Optional[str]:
-        """Render and cache jpeg for hole|s0. Returns URL path or None."""
+        """Render and cache jpeg for materials|hole|s0. Returns URL path or None."""
         kind = str(kind or "").lower()
         cache = self._frame_cache.get("scene")
         if not cache or cache.get("color_bgr") is None:
@@ -222,7 +231,14 @@ class GraspAgent:
         color = cache["color_bgr"]
         intr = cache.get("intrinsics") or {}
         try:
-            if kind == "hole":
+            if kind == "materials":
+                vis = render_materials_viz(
+                    color,
+                    self._materials,
+                    selected_id=self._material_selected_id,
+                    raw_response=((self._last or {}).get("materials_detect") or {}),
+                )
+            elif kind == "hole":
                 vis = render_hole_viz(
                     color,
                     intr,
@@ -367,12 +383,22 @@ class GraspAgent:
                 "s2_latched": self._s2_latched,
                 "s2_stats": dict(self._s2_stats),
                 "hole": self._hole,
+                "materials": {
+                    "items": list(self._materials),
+                    "selected_id": self._material_selected_id,
+                    "count": len(self._materials),
+                },
                 "s0": self._s0,
                 "final": self._final,
                 "site": self._site,
                 "pregrasp_target": self._pregrasp_target,
                 "viz": {
                     "hole": "/api/grasp/viz/hole.jpg" if "hole" in self._viz_jpeg else None,
+                    "materials": (
+                        "/api/grasp/viz/materials.jpg"
+                        if "materials" in self._viz_jpeg
+                        else None
+                    ),
                     "s0": "/api/grasp/viz/s0.jpg" if "s0" in self._viz_jpeg else None,
                     "meta": dict(self._viz_meta),
                 },
@@ -389,6 +415,8 @@ class GraspAgent:
             self._error = ""
             self._last = {}
             self._hole = None
+            self._materials = []
+            self._material_selected_id = None
             self._s0 = None
             self._final = None
             self._site = None
@@ -604,7 +632,202 @@ class GraspAgent:
             return all(v is not None for v in list(pos)[:3])
         return False
 
+    @staticmethod
+    def _sanitize_material(item: Dict[str, Any]) -> Dict[str, Any]:
+        """Keep UI-friendly material fields (drop huge blobs)."""
+        out: Dict[str, Any] = {}
+        for k in (
+            "id",
+            "cls",
+            "sam_text",
+            "score",
+            "area_px",
+            "bbox_xyxy_px",
+            "center_pixel",
+            "polygon_normalized",
+        ):
+            if k in item:
+                out[k] = item[k]
+        try:
+            out["id"] = int(out.get("id", 0))
+        except (TypeError, ValueError):
+            out["id"] = 0
+        return out
+
+    def materials_detect(self) -> Dict[str, Any]:
+        """Detect all material instances (SAM); user selects one before hole/S0."""
+        frame = self._frame_body("scene")
+        # materials/detect only needs color (+ optional sam_text).
+        color_body = {
+            "color_b64": frame.get("color_b64"),
+            "sam_text": self._cfg.get("sam_text"),
+        }
+        try:
+            data = self._client.materials_detect(color_body)
+        except GraspServiceError as exc:
+            with self._lock:
+                self._error = str(exc)
+                self._stage = "error"
+            self._log_line(f"materials/detect FAIL {exc}")
+            raise
+        raw_items = data.get("materials") if isinstance(data, dict) else None
+        if not isinstance(raw_items, list):
+            raw_items = []
+        items = [
+            self._sanitize_material(m)
+            for m in raw_items
+            if isinstance(m, dict)
+        ]
+        items.sort(key=lambda m: (-float(m.get("score") or 0.0), -float(m.get("area_px") or 0.0)))
+        with self._lock:
+            self._materials = items
+            self._material_selected_id = None
+            self._hole = None  # must re-select before S0
+            self._last = {"materials_detect": data}
+            self._stage = "materials"
+            self._error = ""
+        viz_url = self._build_viz("materials")
+        self._log_line(
+            f"materials/detect ok count={len(items)} sam_text={self._cfg.get('sam_text')!r} "
+            f"viz={bool(viz_url)}"
+        )
+        return {
+            **self.status(),
+            "ok": True,
+            "count": len(items),
+            "result": {"ok": bool(data.get("ok", True)), "count": len(items), "materials": items},
+            "viz_url": viz_url,
+        }
+
+    def select_material(self, material_id: int) -> Dict[str, Any]:
+        """Select a materials/detect instance → crop hole/detect → set active hole."""
+        try:
+            mid = int(material_id)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(f"invalid material_id: {material_id}") from exc
+        with self._lock:
+            items = list(self._materials)
+        match = next((m for m in items if int(m.get("id", -1)) == mid), None)
+        if match is None:
+            raise RuntimeError(f"物料 id={mid} 不在候选列表（先跑「检测全部物料」）")
+
+        cache = self._frame_cache.get("scene") or {}
+        color = cache.get("color_bgr")
+        depth = cache.get("depth_u16")
+        intr = dict(cache.get("intrinsics") or {})
+        if color is None:
+            # Re-capture if cache missing (e.g. after restart).
+            self._frame_body("scene")
+            cache = self._frame_cache.get("scene") or {}
+            color = cache.get("color_bgr")
+            depth = cache.get("depth_u16")
+            intr = dict(cache.get("intrinsics") or {})
+        if color is None or depth is None:
+            raise RuntimeError("无场景 RGB-D 缓存 — 先出流或启用 mock 后再检测物料")
+
+        bbox = match.get("bbox_xyxy_px") or []
+        if not (isinstance(bbox, (list, tuple)) and len(bbox) >= 4):
+            raise RuntimeError(f"物料 id={mid} 缺少 bbox_xyxy_px")
+        x0, y0, x1, y1 = [int(round(float(v))) for v in list(bbox)[:4]]
+        if x1 <= x0 or y1 <= y0:
+            raise RuntimeError(f"物料 id={mid} bbox 无效: {bbox}")
+        pad = 24
+        h, w = color.shape[:2]
+        x0 = max(0, x0 - pad)
+        y0 = max(0, y0 - pad)
+        x1 = min(w, x1 + pad)
+        y1 = min(h, y1 + pad)
+        crop_color = color[y0:y1, x0:x1]
+        crop_depth = depth[y0:y1, x0:x1]
+        if crop_color.size == 0 or crop_depth.size == 0:
+            raise RuntimeError("裁剪区域为空")
+
+        ok_c, buf_c = cv2.imencode(".png", crop_color)
+        ok_d, buf_d = cv2.imencode(".png", crop_depth)
+        if not ok_c or not ok_d:
+            raise RuntimeError("裁剪帧 PNG 编码失败")
+
+        crop_intr = {
+            "fx": float(intr.get("fx") or 0.0),
+            "fy": float(intr.get("fy") or 0.0),
+            "ppx": float(intr.get("ppx") or 0.0) - float(x0),
+            "ppy": float(intr.get("ppy") or 0.0) - float(y0),
+            "width": int(crop_color.shape[1]),
+            "height": int(crop_color.shape[0]),
+        }
+        frame = {
+            "color_b64": base64.b64encode(buf_c.tobytes()).decode("ascii"),
+            "depth_b64": base64.b64encode(buf_d.tobytes()).decode("ascii"),
+            "color_intrinsics": crop_intr,
+            "depth_scale": float(cache.get("depth_scale") or self._cfg.get("depth_scale") or 1000.0),
+            "sam_text": self._cfg.get("sam_text") or match.get("sam_text"),
+            "offset_along_normal_mm": self._cfg.get("offset_along_normal_mm"),
+            "normal_direction": self._cfg.get("normal_direction"),
+        }
+        try:
+            data = self._client.hole_detect(frame)
+        except GraspServiceError as exc:
+            with self._lock:
+                self._error = str(exc)
+                self._stage = "error"
+            self._log_line(f"hole/detect(crop mat={mid}) FAIL {exc}")
+            raise
+
+        hole = data.get("hole") if isinstance(data.get("hole"), dict) else data
+        if not isinstance(hole, dict):
+            raise RuntimeError("hole/detect 未返回 hole 对象")
+        hole = dict(hole)
+        # Remap crop pixels → full-frame for viz / UI.
+        cp = hole.get("center_pixel")
+        if isinstance(cp, dict) and cp.get("u") is not None and cp.get("v") is not None:
+            hole["center_pixel"] = {
+                "u": float(cp["u"]) + float(x0),
+                "v": float(cp["v"]) + float(y0),
+            }
+        elif isinstance(cp, (list, tuple)) and len(cp) >= 2:
+            hole["center_pixel"] = [float(cp[0]) + float(x0), float(cp[1]) + float(y0)]
+        hole["material_id"] = mid
+        hole["material"] = dict(match)
+        hole["crop_bbox_xyxy_px"] = [x0, y0, x1, y1]
+
+        try:
+            geom = self._hole_geometry_base(hole)
+            hole["center_base_m"] = geom["center_base_m"]
+            hole["plane_normal_base"] = geom["normal_base"]
+            hole["s0_pregrasp_base_m"] = geom["s0_position_m"]
+            hole["s0_along_normal_m"] = geom["offset_m"]
+        except Exception as exc:  # noqa: BLE001
+            self._log_line(f"WARN hole→base geometry (mat={mid}): {exc}")
+
+        data = dict(data) if isinstance(data, dict) else {"hole": hole}
+        data["hole"] = hole
+        data["material_id"] = mid
+
+        tcp = hole.get("tcp_target") if isinstance(hole.get("tcp_target"), dict) else None
+        tcp_ready = self._position_usable(tcp if isinstance(tcp, dict) else None)
+        with self._lock:
+            self._material_selected_id = mid
+            self._hole = hole
+            self._last = {"hole_detect": data, "material_select": {"id": mid}}
+            self._stage = "hole"
+            self._error = ""
+        viz_m = self._build_viz("materials")
+        viz_h = self._build_viz("hole")
+        self._log_line(
+            f"select material id={mid} → hole ok tcp_usable={tcp_ready} "
+            f"center={hole.get('center_camera_m')} s0={hole.get('s0_pregrasp_base_m')} "
+            f"viz_m={bool(viz_m)} viz_h={bool(viz_h)}"
+        )
+        return {
+            **self.status(),
+            "ok": True,
+            "material_id": mid,
+            "result": data,
+            "viz_url": viz_h,
+        }
+
     def hole_detect(self) -> Dict[str, Any]:
+        """Legacy single-shot hole/detect on full frame (no material pick)."""
         frame = self._frame_body("scene")
         try:
             # HoleDetectRequest: sam_text = material SAM mask text (NOT hole_sam_text).
@@ -638,6 +861,7 @@ class GraspAgent:
         tcp_ready = self._position_usable(tcp if isinstance(tcp, dict) else None)
         with self._lock:
             self._hole = hole
+            self._material_selected_id = None
             self._last = {"hole_detect": data}
             self._stage = "hole"
             self._error = ""

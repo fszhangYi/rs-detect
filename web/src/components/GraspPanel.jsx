@@ -294,7 +294,7 @@ const PIPELINE = [
     key: 'hole',
     title: 'Hole',
     subtitle: '孔检测',
-    hint: 'SAM3 孔检测 → 相机系孔心+法向；经 T_base_cam 到物理系。画布：孔心小球 + 法向。',
+    hint: '先检测全部物料实例，点选其一后再做孔检测（裁剪 ROI）。画布：孔心小球 + 法向。',
     cam: 'scene',
   },
   {
@@ -340,6 +340,7 @@ const STAGE_STEP = {
   site_bad: 0,
   health_ok: 0,
   health_bad: 0,
+  materials: 1,
   hole: 1,
   s0: 2,
   moved: 3,
@@ -837,11 +838,16 @@ export default function GraspPanel({ active, selection }) {
   const scene = selection?.scene || selection?.d435_serial || status?.selection?.scene || '';
   const wrist = selection?.wrist || selection?.d405_serial || status?.selection?.wrist || '';
   const hole = status?.hole || {};
+  const materialsInfo = status?.materials || {};
+  const materialItems = Array.isArray(materialsInfo.items) ? materialsInfo.items : [];
+  const selectedMaterialId = materialsInfo.selected_id;
   const s0 = status?.s0 || {};
   const viz = status?.viz || {};
   const vizHole = viz.hole || null;
+  const vizMaterials = viz.materials || null;
   const vizS0 = viz.s0 || null;
   const vizHoleAt = (viz.meta && viz.meta.hole && viz.meta.hole.at) || '';
+  const vizMaterialsAt = (viz.meta && viz.meta.materials && viz.meta.materials.at) || '';
   const vizS0At = (viz.meta && viz.meta.s0 && viz.meta.s0.at) || '';
   const finalPlan = status?.final || {};
   const pre = status?.pregrasp_target || {};
@@ -1224,7 +1230,13 @@ export default function GraspPanel({ active, selection }) {
               <div className={`grasp-step-block${focus === 1 ? ' is-focus' : ''}`}>
                 <div className="grasp-step-head"><b>② Hole detect</b><span>{PIPELINE[1].hint}</span></div>
                 <Space wrap>
-                  <ActionChip title="场景孔检测" desc="POST /v1/hole/detect" primary loading={busy} onClick={() => call('/api/grasp/hole/detect', {}, '孔检测完成').catch(() => {})} />
+                  <ActionChip
+                    title="检测全部物料"
+                    desc="POST /v1/materials/detect"
+                    primary
+                    loading={busy}
+                    onClick={() => call('/api/grasp/materials/detect', {}, '物料检测完成 — 请点选一个').catch(() => {})}
+                  />
                   <ActionChip
                     title="画布显示孔心/法向"
                     desc={`孔心 − 法向→S0(${(s0AlongNormalM * 100).toFixed(0)}cm)`}
@@ -1232,14 +1244,80 @@ export default function GraspPanel({ active, selection }) {
                     loading={busy}
                     onClick={() => syncHolePoseToCanvas().catch(() => {})}
                   />
+                  <ActionChip
+                    title="整图孔检测"
+                    desc="跳过选择 · 旧路径"
+                    loading={busy}
+                    onClick={() => call('/api/grasp/hole/detect', {}, '整图孔检测完成').catch(() => {})}
+                  />
                 </Space>
+                {materialItems.length > 0 && (
+                  <div className="grasp-material-pick" style={{ marginTop: 10 }}>
+                    <Text type="secondary" style={{ display: 'block', marginBottom: 6 }}>
+                      候选 {materialItems.length} 个 — 点选后自动对该 ROI 做孔检测
+                      {selectedMaterialId != null ? ` · 当前 #${selectedMaterialId}` : ''}
+                    </Text>
+                    <Space wrap>
+                      {materialItems.map((m) => {
+                        const id = Number(m.id);
+                        const active = selectedMaterialId != null && Number(selectedMaterialId) === id;
+                        const score = Number(m.score);
+                        const area = Number(m.area_px);
+                        return (
+                          <Button
+                            key={`mat-${id}`}
+                            type={active ? 'primary' : 'default'}
+                            loading={busy}
+                            onClick={async () => {
+                              setBusy(true);
+                              try {
+                                const st = await api('/api/grasp/materials/select', {
+                                  method: 'POST',
+                                  body: JSON.stringify({ material_id: id }),
+                                });
+                                setStatus(st);
+                                message.success(`已选物料 #${id} 并完成孔检测`);
+                                const center = st?.hole?.center_camera_m;
+                                if (Array.isArray(center) && center.length >= 3) {
+                                  await syncHolePoseToCanvas().catch(() => {});
+                                }
+                              } catch (e) {
+                                message.error(String(e.message || e));
+                                refresh().catch(() => {});
+                              } finally {
+                                setBusy(false);
+                              }
+                            }}
+                          >
+                            #{id}
+                            {Number.isFinite(score) ? ` · ${score.toFixed(2)}` : ''}
+                            {Number.isFinite(area) ? ` · ${Math.round(area)}px` : ''}
+                            {active ? ' ✓' : ''}
+                          </Button>
+                        );
+                      })}
+                    </Space>
+                  </div>
+                )}
                 <VizPane
-                  path={vizHole}
-                  stamp={vizHoleAt}
-                  title="Hole 可视化 · center / pregrasp / normal / mask"
-                  empty="跑孔检测后显示场景帧投影"
+                  path={vizMaterials || vizHole}
+                  stamp={vizMaterialsAt || vizHoleAt}
+                  title={vizMaterials ? '物料候选 · 编号框 / 选中高亮' : 'Hole 可视化 · center / pregrasp / normal / mask'}
+                  empty="先「检测全部物料」，再点选候选"
                 />
+                {vizHole && vizMaterials && (
+                  <VizPane
+                    path={vizHole}
+                    stamp={vizHoleAt}
+                    title="选中物料的孔检测结果"
+                    empty=""
+                  />
+                )}
                 <Descriptions size="small" column={1} style={{ marginTop: 10 }} bordered>
+                  <Descriptions.Item label="selected_material">
+                    {selectedMaterialId != null ? `#${selectedMaterialId}` : '—'}
+                    {hole.material_id != null ? ` · hole.material_id=${hole.material_id}` : ''}
+                  </Descriptions.Item>
                   <Descriptions.Item label="center_camera_m">{fmtVec3(hole.center_camera_m)}</Descriptions.Item>
                   <Descriptions.Item label="plane_normal">{fmtVec3(hole.plane_normal_camera)}</Descriptions.Item>
                   <Descriptions.Item label="pregrasp_camera_m">{fmtVec3(hole.pregrasp_camera_m)}</Descriptions.Item>

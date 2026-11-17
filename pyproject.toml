@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "rs-detect"
 version = "0.1.0"
-description = "D435/D405 dual-camera detect & suction perception toolkit"
+description = "D435 scene + D405 wrist dual-camera perception & suction grasp toolkit (scan, calib, YOLO, Cell C arm, grasp loop)"
 readme = "README.md"
 requires-python = ">=3.8"
 dependencies = [

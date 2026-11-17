@@ -19,8 +19,13 @@ models/**
 .DS_Store
 data/captures/**
 !data/captures/.gitkeep
+data/captures2/
+data/captures3/
 data/capture/
+data/capture2.tar
+data/capture3.tar
 data/captures.bak/
+data/camera_poses/
 data/recordings/**
 !data/recordings/.gitkeep
 data/yolo/images/**
@@ -30,6 +35,7 @@ data/yolo/labels/**
 data/raw/
 data/yolo_seg/
 runs/
+web/_legacy/
 # Local multi-repo symlink / bulky SDKs (not part of this app tree)
 /sensors
 /vendor/
@@ -43,3 +49,6 @@ runs/
 web/assets/models
 web/assets/vendor
 web/assets/scene/*.stl
+
+*.cache
+data/yolo/**/*.cache

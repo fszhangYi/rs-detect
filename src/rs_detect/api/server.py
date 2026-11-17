@@ -562,14 +562,36 @@ def api_grasp_mock_preview(
 
 @app.get("/api/grasp/viz/{kind}.jpg")
 def api_grasp_viz(kind: str):
-    """Hole / S0 overlay jpeg (client-side projection on last scene frame)."""
+    """Materials / Hole / S0 overlay jpeg (client-side projection on last scene frame)."""
     kind_l = str(kind or "").lower().replace(".jpg", "")
-    if kind_l not in {"hole", "s0"}:
-        raise HTTPException(404, "kind must be hole|s0")
+    if kind_l not in {"hole", "s0", "materials"}:
+        raise HTTPException(404, "kind must be materials|hole|s0")
     data = get_service().grasp.get_viz_jpeg(kind_l)
     if not data:
         raise HTTPException(404, f"no {kind_l} viz yet — run detect/plan first")
     return Response(content=data, media_type="image/jpeg")
+
+
+class GraspMaterialSelectBody(BaseModel):
+    material_id: int = Field(..., description="id from materials/detect candidate list")
+
+
+@app.post("/api/grasp/materials/detect")
+def api_grasp_materials_detect():
+    """Detect all material instances; pick one before hole/S0."""
+    try:
+        return get_service().grasp.materials_detect()
+    except Exception as exc:
+        raise _grasp_http(exc) from exc
+
+
+@app.post("/api/grasp/materials/select")
+def api_grasp_materials_select(body: GraspMaterialSelectBody):
+    """Select a material candidate → crop hole/detect → set active hole."""
+    try:
+        return get_service().grasp.select_material(body.material_id)
+    except Exception as exc:
+        raise _grasp_http(exc) from exc
 
 
 @app.post("/api/grasp/hole/detect")

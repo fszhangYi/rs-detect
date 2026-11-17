@@ -162,6 +162,85 @@ def _banner(vis: np.ndarray, lines: List[str], color: Tuple[int, int, int] = (24
         y += 20
 
 
+def render_materials_viz(
+    color_bgr: np.ndarray,
+    materials: Sequence[Dict[str, Any]],
+    *,
+    selected_id: Optional[int] = None,
+    raw_response: Optional[Dict[str, Any]] = None,
+) -> np.ndarray:
+    """Overlay numbered material bboxes for interactive pick."""
+    raw = raw_response if isinstance(raw_response, dict) else {}
+    server_vis = _pick_server_vis(raw)
+    vis = server_vis.copy() if server_vis is not None else color_bgr.copy()
+    h, w = vis.shape[:2]
+    palette = [
+        (40, 180, 40),
+        (0, 165, 255),
+        (255, 128, 0),
+        (255, 0, 255),
+        (0, 255, 255),
+        (80, 80, 255),
+    ]
+    items = [m for m in (materials or []) if isinstance(m, dict)]
+    for i, m in enumerate(items):
+        color = palette[i % len(palette)]
+        try:
+            mid = int(m.get("id", i))
+        except (TypeError, ValueError):
+            mid = i
+        selected = selected_id is not None and int(selected_id) == mid
+        thickness = 3 if selected else 2
+        bbox = m.get("bbox_xyxy_px")
+        if isinstance(bbox, (list, tuple)) and len(bbox) >= 4:
+            x0, y0, x1, y1 = [int(round(float(v))) for v in list(bbox)[:4]]
+            x0 = max(0, min(w - 1, x0))
+            x1 = max(0, min(w - 1, x1))
+            y0 = max(0, min(h - 1, y0))
+            y1 = max(0, min(h - 1, y1))
+            cv2.rectangle(vis, (x0, y0), (x1, y1), color, thickness, lineType=cv2.LINE_AA)
+            label = f"#{mid}"
+            score = m.get("score")
+            if score is not None:
+                try:
+                    label += f" {float(score):.2f}"
+                except (TypeError, ValueError):
+                    pass
+            cv2.putText(
+                vis,
+                label,
+                (x0 + 4, max(18, y0 - 6)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                color,
+                2,
+                cv2.LINE_AA,
+            )
+        # polygon overlay (normalized 0..1)
+        poly = m.get("polygon_normalized")
+        if isinstance(poly, (list, tuple)) and len(poly) >= 3:
+            pts = []
+            for p in poly:
+                if isinstance(p, (list, tuple)) and len(p) >= 2:
+                    pts.append([int(round(float(p[0]) * w)), int(round(float(p[1]) * h))])
+            if len(pts) >= 3:
+                arr = np.asarray(pts, dtype=np.int32).reshape(-1, 1, 2)
+                cv2.polylines(vis, [arr], True, color, 1, lineType=cv2.LINE_AA)
+                if selected:
+                    overlay = vis.copy()
+                    cv2.fillPoly(overlay, [arr], color)
+                    vis = cv2.addWeighted(overlay, 0.18, vis, 0.82, 0)
+    _banner(
+        vis,
+        [
+            "MATERIALS detect",
+            f"count={len(items)}  selected={selected_id if selected_id is not None else '—'}",
+            "click a candidate in UI → hole detect on that crop",
+        ],
+    )
+    return vis
+
+
 def render_hole_viz(
     color_bgr: np.ndarray,
     intrinsics: Dict[str, Any],

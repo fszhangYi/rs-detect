@@ -12,7 +12,7 @@ execute_motion: false
 force_without_s2_exit: false
 use_mock_frames: true
 mock_scene_id: '336222075436_20261116_204231_558'
-mock_wrist_id: __stock__
+mock_wrist_id: '336222075436_20261116_204307_284'
 s2_hz: 10.0
 s2_max_steps: 600
 insert_total_m: 0.012

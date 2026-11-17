@@ -4,7 +4,7 @@ notes: 'D405: T_flange_cam (eye-in-hand). D435: T_base_cam. d435 from canvas d43
   offset_m=[0.009, 0.787, 0.728] rpy_ThreejsXYZ=[180.0, -1.5, 89.5]; CAD mesh frame≈cam
   (optical offset not applied).'
 d405:
-  serial: MOCK_D405_0001
+  serial: '218622279681'
   frame_from: flange
   frame_to: d405_cad
   T:
@@ -48,7 +48,7 @@ d405:
     - 0.022
     - -0.199
 d435:
-  serial: MOCK_D435_0001
+  serial: '336222075436'
   frame_from: base
   frame_to: d435_cad
   T:
