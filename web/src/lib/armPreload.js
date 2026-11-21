@@ -4,13 +4,14 @@ export const armPreload = {
   model: null,
   urdfText: null,
   urdfUrl: null,
+  meshVer: null,
   meshBlobs: {}, // path -> objectURL
   ready: false,
   promise: null,
   error: null,
 };
 
-export const ARM_MESH_PRELOAD = [
+const ARM_LINK_MESHES = [
   "meshes/base_link.STL",
   "meshes/link1.STL",
   "meshes/link2.STL",
@@ -18,42 +19,95 @@ export const ARM_MESH_PRELOAD = [
   "meshes/link4.STL",
   "meshes/link5.STL",
   "meshes/link6.STL",
-  "meshes/EFG-C65.STL",
-  "meshes/EFG-C65.v3.STL",
-  "meshes/D405_camera.STL",
-  "meshes/EFG-C65_D405_bracket.STL",
-  "meshes/EFG-C65_D405_fingertip_l.STL",
-  "meshes/EFG-C65_D405_fingertip_r.STL",
-  "meshes/EFG-C65_D405_l_clamp.STL",
 ];
 
-export async function preloadArmAssets() {
+const EOAT_MESH_NAMES = [
+  "efg_c65_base.STL",
+  "efg_c65_left_finger_base.STL",
+  "efg_c65_left_fingertip.STL",
+  "efg_c65_right_finger_base.STL",
+  "efg_c65_right_fingertip.STL",
+  "efg_c65_camera_bracket.STL",
+  "efg_c65_camera_clamp.STL",
+  "d405_camera.STL",
+];
+
+/** EOAT mesh folder depends on selected URDF (cellc vs cellc_m). */
+export function eoatMeshDirFromUrdf(urdfUrl) {
+  const path = String(urdfUrl || "").split("?")[0];
+  if (path.includes("cell_c_m") || path.includes("cellc_m")) return "meshes_cellc_m";
+  return "meshes";
+}
+
+export function armMeshPreloadList(urdfUrl) {
+  const eoatDir = eoatMeshDirFromUrdf(urdfUrl);
+  return [
+    ...ARM_LINK_MESHES,
+    ...EOAT_MESH_NAMES.map((n) => `${eoatDir}/${n}`),
+  ];
+}
+
+function urdfMeshVersion(urdfUrl) {
+  const q = String(urdfUrl || "").split("?")[1] || "";
+  const m = /(?:^|&)v=([^&]+)/.exec(q);
+  return (m && m[1]) || "1";
+}
+
+function clearMeshBlobs() {
+  Object.values(armPreload.meshBlobs).forEach((u) => {
+    try {
+      if (typeof u === "string" && u.startsWith("blob:")) URL.revokeObjectURL(u);
+    } catch (_) { /* ignore */ }
+  });
+  armPreload.meshBlobs = {};
+}
+
+/** Drop in-memory URDF/STL preload so the next call re-fetches (EOAT mesh updates). */
+export function invalidateArmPreload() {
+  clearMeshBlobs();
+  armPreload.model = null;
+  armPreload.urdfText = null;
+  armPreload.urdfUrl = null;
+  armPreload.meshVer = null;
+  armPreload.ready = false;
+  armPreload.promise = null;
+  armPreload.error = null;
+}
+
+export async function preloadArmAssets({ force = false, model = null } = {}) {
+  if (force) invalidateArmPreload();
   if (armPreload.promise) return armPreload.promise;
   armPreload.promise = (async () => {
-    const st = await api("/api/arm/state");
-    armPreload.model = st.model;
-    const urdfUrl = String((st.model && st.model.urdf) || "/assets/models/cs66/cs66_cell_c.urdf");
+    const st = model ? { model } : await api("/api/arm/state");
+    const mdl = st.model || model;
+    armPreload.model = mdl;
+    const urdfUrl = String((mdl && mdl.urdf) || "/assets/models/cs66/cs66_cell_c.urdf");
     const pathOnly = urdfUrl.split("?")[0];
     const base = pathOnly.replace(/[^/]+$/, "");
+    const meshVer = urdfMeshVersion(urdfUrl);
     armPreload.urdfUrl = urdfUrl;
-    const urdfRes = await fetch(pathOnly);
+    armPreload.meshVer = meshVer;
+    const urdfRes = await fetch(`${pathOnly}?v=${encodeURIComponent(meshVer)}`, { cache: "no-store" });
     if (!urdfRes.ok) throw new Error("URDF HTTP " + urdfRes.status);
     armPreload.urdfText = await urdfRes.text();
-    await Promise.all(ARM_MESH_PRELOAD.map(async (rel) => {
-      const url = base + rel;
+    const meshList = armMeshPreloadList(urdfUrl);
+    await Promise.all(meshList.map(async (rel) => {
+      const url = `${base}${rel}?v=${encodeURIComponent(meshVer)}`;
       try {
-        const r = await fetch(url);
+        const r = await fetch(url, { cache: "no-store" });
         if (!r.ok) return;
         const blob = await r.blob();
         const obj = URL.createObjectURL(blob);
         armPreload.meshBlobs[rel] = obj;
         armPreload.meshBlobs[url] = obj;
-        // Case-insensitive aliases — URDF often uses .STL while list uses .STL/.stl mix.
+        armPreload.meshBlobs[base + rel] = obj;
         const baseName = rel.split("/").pop() || rel;
         armPreload.meshBlobs[`meshes/${baseName}`] = obj;
+        armPreload.meshBlobs[`meshes_cellc_m/${baseName}`] = obj;
         armPreload.meshBlobs[baseName] = obj;
         armPreload.meshBlobs[baseName.toLowerCase()] = obj;
         armPreload.meshBlobs[`meshes/${baseName.toLowerCase()}`] = obj;
+        armPreload.meshBlobs[`meshes_cellc_m/${baseName.toLowerCase()}`] = obj;
       } catch (_) {}
     }));
     armPreload.ready = true;
@@ -65,4 +119,3 @@ export async function preloadArmAssets() {
   });
   return armPreload.promise;
 }
-

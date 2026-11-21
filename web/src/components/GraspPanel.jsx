@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert, Badge, Button, Card, Col, Collapse, Descriptions, Divider, Input, InputNumber,
-  Progress, Row, Select, Space, Steps, Switch, Tag, Tooltip, Typography, message,
+  Progress, Row, Select, Slider, Space, Steps, Switch, Tag, Tooltip, Typography, message,
 } from 'antd';
 import { API, api } from '../lib/api.js';
 import { armGhostTarget, armSceneMarkers, ARM_MARKER_COLORS } from '../lib/armMarkers.js';
@@ -591,7 +591,19 @@ export default function GraspPanel({ active, selection }) {
     }
   }, [status?.stage, previewAll]);
 
-  const patchSite = (patch) => setSiteForm((prev) => ({ ...(prev || payloadToSiteForm({})), ...patch }));
+  const patchSite = (patch) => {
+    setSiteForm((prev) => ({ ...(prev || payloadToSiteForm({})), ...patch }));
+    // Live-preview finger opening on Arm ghost when Grasp open width changes.
+    if (patch && Object.prototype.hasOwnProperty.call(patch, 'width_open')) {
+      const cur = armGhostTarget.current;
+      if (cur && Array.isArray(cur.joints_rad)) {
+        armGhostTarget.set({
+          ...cur,
+          gripper_width_m: Number(patch.width_open),
+        });
+      }
+    }
+  };
 
   const fillSiteFromLocal = useCallback(async () => {
     setBusy(true);
@@ -805,11 +817,18 @@ export default function GraspPanel({ active, selection }) {
       const ikOk = !!(r?.ik?.ok && Array.isArray(joints) && joints.length >= 6);
       const strategy = r?.ik?.strategy || '';
       if (ikOk) {
+        const gripOpen = [
+          (r?.gripper || {}).width_m,
+          (status?.s0 || {}).gripper?.width_m,
+          siteForm?.width_open,
+          status?.config?.gripper_width_m_open,
+        ].map(Number).find((v) => Number.isFinite(v));
         armGhostTarget.set({
           joints_rad: joints,
           xyzrpy: tcpXyzrpy,
           label: 'S0 TCP',
           source: r.source || 's0.pregrasp→tcp',
+          gripper_width_m: Number.isFinite(gripOpen) ? gripOpen : undefined,
         });
       }
       if (!marked) throw new Error('点位无效');
@@ -1149,15 +1168,38 @@ export default function GraspPanel({ active, selection }) {
                           onXyz={(xyz) => patchSite({ tcp_xyz: xyz })}
                           onRpy={(rpy) => patchSite({ gripper_rpy_deg: rpy })}
                         />
-                        <Space wrap size={[12, 8]} style={{ marginTop: 8 }}>
-                          <div className="grasp-field inline">
-                            <label>width open</label>
-                            <InputNumber min={0} max={0.2} step={0.005} value={siteForm.width_open} onChange={(v) => patchSite({ width_open: typeof v === 'number' ? v : siteForm.width_open })} />
+                        <div style={{ marginTop: 8 }}>
+                          <div className="grasp-field" style={{ marginBottom: 6 }}>
+                            <label>gripper 开度 open（总宽 m · 约 2×单侧 finger）</label>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 110px', gap: 8, alignItems: 'center' }}>
+                              <Slider
+                                min={0}
+                                max={0.08}
+                                step={0.001}
+                                value={Math.max(0, Math.min(0.08, Number(siteForm.width_open) || 0))}
+                                onChange={(v) => patchSite({ width_open: typeof v === 'number' ? v : siteForm.width_open })}
+                              />
+                              <InputNumber
+                                min={0}
+                                max={0.2}
+                                step={0.001}
+                                value={siteForm.width_open}
+                                onChange={(v) => patchSite({ width_open: typeof v === 'number' ? v : siteForm.width_open })}
+                                addonAfter="m"
+                                style={{ width: 110 }}
+                              />
+                            </div>
+                            <Text type="secondary" style={{ fontSize: 12 }}>
+                              {((Number(siteForm.width_open) || 0) * 1000).toFixed(1)} mm 总开度
+                              · 单侧约 {((Number(siteForm.width_open) || 0) * 500).toFixed(1)} mm
+                            </Text>
                           </div>
-                          <div className="grasp-field inline">
+                          <div className="grasp-field inline" style={{ marginBottom: 8 }}>
                             <label>closed</label>
                             <InputNumber min={0} max={0.2} step={0.005} value={siteForm.width_closed} onChange={(v) => patchSite({ width_closed: typeof v === 'number' ? v : siteForm.width_closed })} />
                           </div>
+                        </div>
+                        <Space wrap size={[12, 8]} style={{ marginTop: 8 }}>
                           <div className="grasp-field inline">
                             <label>robot_id</label>
                             <Input style={{ width: 140 }} value={siteForm.robot_id} onChange={(e) => patchSite({ robot_id: e.target.value })} />
@@ -1440,6 +1482,15 @@ export default function GraspPanel({ active, selection }) {
                 <Descriptions size="small" column={2} style={{ marginTop: 10 }} bordered>
                   <Descriptions.Item label="session_id" span={2}>
                     <Text code copyable={!!status?.session_id}>{status?.session_id || '—'}</Text>
+                  </Descriptions.Item>
+                  <Descriptions.Item label="material_id" span={2}>
+                    {(s0.material_id != null || selectedMaterialId != null)
+                      ? `#${s0.material_id ?? selectedMaterialId}`
+                      : '—'}
+                    {selectedMaterialId != null && s0.material_id != null
+                      && Number(selectedMaterialId) !== Number(s0.material_id)
+                      ? ' · 与 Hole 选择不一致，请重跑 S0'
+                      : ''}
                   </Descriptions.Item>
                   <Descriptions.Item label="calibrated">{String(s0.calibrated ?? '—')}</Descriptions.Item>
                   <Descriptions.Item label="gripper.width_m">{gripperW == null ? '—' : fmtNum(gripperW, 4)}</Descriptions.Item>

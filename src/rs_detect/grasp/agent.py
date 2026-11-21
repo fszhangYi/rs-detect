@@ -808,6 +808,12 @@ class GraspAgent:
         with self._lock:
             self._material_selected_id = mid
             self._hole = hole
+            # Invalidate downstream session — remote S0 must be re-planned on this pick.
+            self._s0 = None
+            self._session_id = None
+            self._s2_latched = False
+            self._final = None
+            self._pregrasp_target = None
             self._last = {"hole_detect": data, "material_select": {"id": mid}}
             self._stage = "hole"
             self._error = ""
@@ -816,7 +822,7 @@ class GraspAgent:
         self._log_line(
             f"select material id={mid} → hole ok tcp_usable={tcp_ready} "
             f"center={hole.get('center_camera_m')} s0={hole.get('s0_pregrasp_base_m')} "
-            f"viz_m={bool(viz_m)} viz_h={bool(viz_h)}"
+            f"viz_m={bool(viz_m)} viz_h={bool(viz_h)} (cleared session/S0)"
         )
         return {
             **self.status(),
@@ -965,16 +971,101 @@ class GraspAgent:
             "calibrated": geom["calibrated"],
         }
 
+    def _frame_for_selected_material(self) -> Dict[str, Any]:
+        """Scene FrameUpload cropped to the Hole-selected material ROI when available.
+
+        Remote ``/v1/s0/plan`` re-runs SAM on whatever image we upload. If we send the
+        full scene, the server often latches onto a different instance (e.g. #1) than
+        the one the user picked for Hole (#0). Cropping keeps session/gripper/mask
+        aligned with ``select_material``.
+        """
+        with self._lock:
+            hole = dict(self._hole) if isinstance(self._hole, dict) else {}
+            mid = self._material_selected_id
+            items = list(self._materials)
+        bbox = hole.get("crop_bbox_xyxy_px")
+        need_pad = False
+        if not (isinstance(bbox, (list, tuple)) and len(bbox) >= 4) and mid is not None:
+            match = next((m for m in items if int(m.get("id", -1)) == int(mid)), None)
+            if isinstance(match, dict):
+                bbox = match.get("bbox_xyxy_px")
+                need_pad = True  # raw material bbox; select_material stored crop already padded
+        if not (isinstance(bbox, (list, tuple)) and len(bbox) >= 4):
+            return self._frame_body("scene")
+
+        cache = self._frame_cache.get("scene") or {}
+        color = cache.get("color_bgr")
+        depth = cache.get("depth_u16")
+        intr = dict(cache.get("intrinsics") or {})
+        if color is None or depth is None:
+            self._frame_body("scene")
+            cache = self._frame_cache.get("scene") or {}
+            color = cache.get("color_bgr")
+            depth = cache.get("depth_u16")
+            intr = dict(cache.get("intrinsics") or {})
+        if color is None or depth is None:
+            return self._frame_body("scene")
+
+        x0, y0, x1, y1 = [int(round(float(v))) for v in list(bbox)[:4]]
+        if x1 <= x0 or y1 <= y0:
+            return self._frame_body("scene")
+        h, w = color.shape[:2]
+        pad = 24 if need_pad else 0
+        x0 = max(0, min(w - 1, x0 - pad))
+        y0 = max(0, min(h - 1, y0 - pad))
+        x1 = max(x0 + 1, min(w, x1 + pad))
+        y1 = max(y0 + 1, min(h, y1 + pad))
+        crop_color = color[y0:y1, x0:x1]
+        crop_depth = depth[y0:y1, x0:x1]
+        if crop_color.size == 0 or crop_depth.size == 0:
+            return self._frame_body("scene")
+        ok_c, buf_c = cv2.imencode(".png", crop_color)
+        ok_d, buf_d = cv2.imencode(".png", crop_depth)
+        if not ok_c or not ok_d:
+            return self._frame_body("scene")
+        crop_intr = {
+            "fx": float(intr.get("fx") or 0.0),
+            "fy": float(intr.get("fy") or 0.0),
+            "ppx": float(intr.get("ppx") or 0.0) - float(x0),
+            "ppy": float(intr.get("ppy") or 0.0) - float(y0),
+            "width": int(crop_color.shape[1]),
+            "height": int(crop_color.shape[0]),
+        }
+        self._log_line(
+            f"s0 frame=material crop id={mid} bbox=[{x0},{y0},{x1},{y1}] "
+            f"{crop_intr['width']}x{crop_intr['height']}"
+        )
+        return {
+            "color_b64": base64.b64encode(buf_c.tobytes()).decode("ascii"),
+            "depth_b64": base64.b64encode(buf_d.tobytes()).decode("ascii"),
+            "color_intrinsics": crop_intr,
+            "depth_scale": float(cache.get("depth_scale") or self._cfg.get("depth_scale") or 1000.0),
+            "sam_text": self._cfg.get("sam_text"),
+            "material_id": mid,
+        }
+
     def s0_plan(self) -> Dict[str, Any]:
         """Remote S0 for session/gripper; motion pose = hole + 7cm along normal."""
         if not isinstance(self._hole, dict) or not self._hole:
-            raise RuntimeError("S0 依赖孔检测：请先跑 Hole detect")
+            raise RuntimeError("S0 依赖孔检测：请先跑 Hole detect / 点选物料")
         local = self.build_s0_from_hole()
-        frame = self._frame_body("scene")
+        with self._lock:
+            mid = self._material_selected_id
+            if mid is None and isinstance(self._hole, dict):
+                try:
+                    mid = int(self._hole.get("material_id"))
+                except (TypeError, ValueError):
+                    mid = None
+        frame = self._frame_for_selected_material()
         data: Dict[str, Any] = {}
         remote_err = ""
         try:
-            data = self._client.s0_plan(frame, sam_text=self._cfg.get("sam_text"))
+            # Extra material_id is ignored if server schema drops it; crop is the real fix.
+            data = self._client.s0_plan(
+                frame,
+                sam_text=self._cfg.get("sam_text"),
+                material_id=mid,
+            )
             if not isinstance(data, dict):
                 data = {"raw": data}
         except GraspServiceError as exc:
@@ -995,7 +1086,9 @@ class GraspAgent:
         motion["plane_normal_base"] = local["normal_base"]
         motion["pregrasp_flange"] = dict(local["target"])
         motion["tcp_target"] = dict(local["target"])
+        motion["material_id"] = mid
         data["motion"] = motion
+        data["material_id"] = mid
         data["client_s0"] = {
             k: local[k]
             for k in (
@@ -1009,6 +1102,7 @@ class GraspAgent:
                 "tip_down",
             )
         }
+        data["client_s0"]["material_id"] = mid
         data["calibrated"] = bool(data.get("calibrated") or local.get("calibrated"))
 
         sid = data.get("session_id")
@@ -1021,7 +1115,7 @@ class GraspAgent:
             self._error = remote_err
         viz_url = self._build_viz("s0")
         self._log_line(
-            f"s0/plan session={sid} backend=hole+{local['offset_m']}m "
+            f"s0/plan session={sid} material_id={mid} backend=hole+{local['offset_m']}m "
             f"pos={local['position_m']} tip_down={local['tip_down']} "
             f"gripper={((data.get('gripper') or {}).get('width_m'))} "
             f"remote={'ok' if not remote_err else 'fail'} viz={bool(viz_url)}"
@@ -2044,7 +2138,7 @@ class GraspAgent:
     def run_hole_pipeline(self, *, include_s1: Optional[bool] = None) -> Dict[str, Any]:
         """Hole path via grasp-service only (not Detect ICP/M3).
 
-        site sync → hole/detect → s0 → move → (opt S1) → s2 latch/loop → final → exec.
+        site sync → hole (keep user pick if any) → s0 → move → (opt S1) → s2 → final → exec.
         Does **not** call rs-detect pipeline ICP / multiview ``p_pregrasp`` — avoid double pre-grasp.
         """
         use_s1 = self._cfg.get("include_s1") if include_s1 is None else include_s1
@@ -2052,7 +2146,17 @@ class GraspAgent:
         results["site"] = self.site_sync()
         if not results["site"].get("ok"):
             return {**self.status(), "ok": False, "results": results}
-        results["hole"] = self.hole_detect()
+        with self._lock:
+            mid = self._material_selected_id
+            hole_ready = isinstance(self._hole, dict) and bool(self._hole)
+        if mid is not None and hole_ready:
+            # Keep the Hole-stage user pick; do not re-run full-frame hole/detect.
+            results["hole"] = {**self.status(), "ok": True, "material_id": mid, "reused": True}
+            self._log_line(f"run/hole reuse selected material id={mid}")
+        elif mid is not None:
+            results["hole"] = self.select_material(int(mid))
+        else:
+            results["hole"] = self.hole_detect()
         results["s0"] = self.s0_plan()
         results["move"] = self.move_pregrasp()
         if use_s1:

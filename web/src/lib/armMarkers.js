@@ -30,11 +30,14 @@ export const armGhostTarget = {
     if (!payload || !Array.isArray(payload.joints_rad) || payload.joints_rad.length < 6) {
       return false;
     }
+    const gw = payload.gripper_width_m;
     this.current = {
       joints_rad: payload.joints_rad.slice(0, 6).map(Number),
       xyzrpy: Array.isArray(payload.xyzrpy) ? payload.xyzrpy.slice(0, 6).map(Number) : null,
       label: payload.label || 'ghost',
       source: payload.source || '',
+      // Grasp total jaw width (m); ArmPanel maps to left_finger_joint ≈ width/2.
+      gripper_width_m: Number.isFinite(Number(gw)) ? Number(gw) : null,
       at: Date.now(),
     };
     this._emit();

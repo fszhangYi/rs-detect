@@ -1,10 +1,8 @@
 version: 1
 units: meters_radians_row_major_4x4
-notes: 'D405: T_flange_cam (eye-in-hand). D435: T_base_cam. d435 from canvas d435_a
-  offset_m=[0.009, 0.787, 0.728] rpy_ThreejsXYZ=[180.0, -1.5, 89.5]; CAD mesh frame≈cam
-  (optical offset not applied).'
+notes: 'D405: T_flange_cam (eye-in-hand). D435: T_base_cam (user default 2026-11-18).'
 d405:
-  serial: '218622279681'
+  serial: MOCK_D405_0001
   frame_from: flange
   frame_to: d405_cad
   T:
@@ -48,38 +46,33 @@ d405:
     - 0.022
     - -0.199
 d435:
-  serial: '336222075436'
+  serial: MOCK_D435_0001
   frame_from: base
   frame_to: d435_cad
   T:
-  - - 0.008723545132608715
-    - -0.9996192610877435
-    - -0.026176948307873156
-    - 0.009
-  - - -0.9999619230641712
-    - -0.008726535498373919
-    - -1.231653667943533e-16
-    - 0.787
-  - - -0.00022843406864763056
-    - 0.026175951569892247
-    - -0.9996573249755571
-    - 0.728
+  - - -0.15316592
+    - -0.97487564
+    - 0.1617334
+    - 0.27515111
+  - - -0.98790521
+    - 0.14705483
+    - -0.04917496
+    - 0.78747459
+  - - 0.0241558
+    - -0.16730919
+    - -0.98560851
+    - 0.72743834
   - - 0.0
     - 0.0
     - 0.0
     - 1.0
   source:
     camera_overlay_id: d435_a
-    offset_m: &id001
-    - 0.009
-    - 0.787
-    - 0.728
+    t_base_cam_m:
+    - 0.27515111
+    - 0.78747459
+    - 0.72743834
     offset_rpy_deg_threejs_XYZ:
-    - 180.0
-    - -1.5
-    - 89.5
-    t_base_cam_m: *id001
-    rpy_xyz_extrinsic_deg:
-    - 178.5
-    - 0.013
-    - -89.5
+    - -170.36575547
+    - -1.38415982
+    - -98.81303296

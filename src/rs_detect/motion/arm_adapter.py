@@ -51,6 +51,23 @@ DEFAULT_TCP = (0.0, 0.0, 0.192)  # Cell C EFG fingertip (body tip/指根≈0.117
 _DEFAULT_SOFT_LO_RAD = [-math.pi] * 6
 _DEFAULT_SOFT_HI_RAD = [math.pi] * 6
 
+DEFAULT_EOAT_CATALOG: Dict[str, Dict[str, Any]] = {
+    "cellc": {
+        "id": "cellc",
+        "label": "cellc · EFG-C65 + D405",
+        "urdf": "/assets/models/cs66/cs66_cell_c.urdf?v=cellc-1",
+        "tcp_xyz": [0.0, 0.0, 0.192],
+        "notes": "Current Cell C EOAT (meshes/)",
+    },
+    "cellc_m": {
+        "id": "cellc_m",
+        "label": "cellc_m · digital-model/cellc_m",
+        "urdf": "/assets/models/cs66/cs66_cell_c_m.urdf?v=cellc-m-2",
+        "tcp_xyz": [0.0, 0.0, 0.337],
+        "notes": "Parallel EOAT from digital-model/cellc_m (crossed tips; body-only base)",
+    },
+}
+
 
 def load_robot_config(path: Path) -> Dict[str, Any]:
     data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
@@ -160,16 +177,73 @@ class CellCArmAdapter:
             logger.warning("soft_limits_rad fallback (±π): %s", exc)
             return list(_DEFAULT_SOFT_LO_RAD), list(_DEFAULT_SOFT_HI_RAD)
 
+    def eoat_catalog(self) -> Dict[str, Dict[str, Any]]:
+        raw = self.cfg.get("eoat_catalog")
+        out = {k: dict(v) for k, v in DEFAULT_EOAT_CATALOG.items()}
+        if isinstance(raw, dict):
+            for key, val in raw.items():
+                if isinstance(val, dict):
+                    cur = dict(out.get(str(key)) or {"id": str(key)})
+                    cur.update(val)
+                    cur["id"] = str(val.get("id") or key)
+                    out[str(key)] = cur
+        return out
+
+    def current_eoat_id(self) -> str:
+        a = self.arm_cfg
+        eid = str(a.get("eoat_id") or "").strip()
+        catalog = self.eoat_catalog()
+        if eid and eid in catalog:
+            return eid
+        urdf = str(a.get("urdf") or "")
+        for key, entry in catalog.items():
+            if str(entry.get("urdf") or "").split("?")[0] == urdf.split("?")[0]:
+                return key
+        return "cellc" if "cellc" in catalog else next(iter(catalog), "cellc")
+
+    def set_eoat(self, eoat_id: str, *, persist: bool = True) -> Dict[str, Any]:
+        """Switch EOAT URDF package (cellc | cellc_m). Viz-only; reconnect not required."""
+        catalog = self.eoat_catalog()
+        key = str(eoat_id or "").strip()
+        if key not in catalog:
+            raise RuntimeError(f"unknown eoat_id={eoat_id!r}; choose from {sorted(catalog)}")
+        entry = catalog[key]
+        with self._lock:
+            self.arm_cfg["eoat_id"] = key
+            self.arm_cfg["urdf"] = str(entry.get("urdf") or self.arm_cfg.get("urdf"))
+            tcp = entry.get("tcp_xyz")
+            if isinstance(tcp, (list, tuple)) and len(tcp) >= 3:
+                self.arm_cfg["tcp_xyz"] = [float(tcp[0]), float(tcp[1]), float(tcp[2])]
+            self.cfg["arm"] = dict(self.arm_cfg)
+            if "eoat_catalog" not in self.cfg:
+                self.cfg["eoat_catalog"] = catalog
+        if persist:
+            self._persist_cfg()
+        return self.eoat_status()
+
+    def eoat_status(self) -> Dict[str, Any]:
+        catalog = self.eoat_catalog()
+        eid = self.current_eoat_id()
+        return {
+            "ok": True,
+            "eoat_id": eid,
+            "eoat": catalog.get(eid),
+            "catalog": list(catalog.values()),
+            "model": self.model_descriptor(),
+        }
+
     # ---- catalog for Three.js ----
     def model_descriptor(self) -> Dict[str, Any]:
         a = self.arm_cfg
         lo_rad, hi_rad = self.soft_limits_rad()
+        eid = self.current_eoat_id()
         return {
             "id": a.get("id") or "arm-c",
             "label": a.get("label") or "Cell C · CS66 G26562",
             "model": a.get("model") or "elite_cs66_g26562",
             "brand": a.get("brand") or "Elite",
             "product": a.get("product") or "CS66",
+            "eoat_id": eid,
             "urdf": a.get("urdf") or "/assets/models/cs66/cs66_cell_c.urdf",
             "joint_names": list(a.get("joint_names") or [f"joint{i}" for i in range(1, 7)]),
             "joint_offset_rad": list(a.get("joint_offset_rad") or [0.0] * 6),

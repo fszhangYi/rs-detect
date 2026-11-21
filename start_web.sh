@@ -69,18 +69,35 @@ fi
 export RS_DETECT_WEB_HOST="$HOST"
 export RS_DETECT_WEB_PORT="$PORT"
 
+# Sibling workspace packages (AutoDL or local multi-repo checkout)
+WS_PARENT="$(cd "$ROOT/.." && pwd)"
+_EXTRA_PP=""
+for _sib in sensors sensors-arm; do
+  if [[ -d "$WS_PARENT/$_sib/src" ]]; then
+    _EXTRA_PP="${_EXTRA_PP:+$_EXTRA_PP:}$WS_PARENT/$_sib/src"
+  fi
+done
+# Legacy AutoDL layout fallback
+if [[ -z "$_EXTRA_PP" ]]; then
+  for _p in /home/ubuntu/autodl-tmp/sensors/src /home/ubuntu/autodl-tmp/sensors-arm/src; do
+    [[ -d "$_p" ]] && _EXTRA_PP="${_EXTRA_PP:+$_EXTRA_PP:}$_p"
+  done
+fi
+
 if [[ -f "$ROOT/.venv312/bin/activate" ]]; then
   # shellcheck disable=SC1091
   source "$ROOT/.venv312/bin/activate"
   export PATH="$ROOT/.venv312/bin:$PATH"
-  export PYTHONPATH="$ROOT/src:/home/ubuntu/autodl-tmp/sensors/src:/home/ubuntu/autodl-tmp/sensors-arm/src${PYTHONPATH:+:$PYTHONPATH}"
+  export PYTHONPATH="$ROOT/src${_EXTRA_PP:+:$_EXTRA_PP}${PYTHONPATH:+:$PYTHONPATH}"
 elif [[ -f "$ROOT/.venv/bin/activate" ]]; then
   # shellcheck disable=SC1091
   source "$ROOT/scripts/env.sh"
+  export PYTHONPATH="$ROOT/src${_EXTRA_PP:+:$_EXTRA_PP}${PYTHONPATH:+:$PYTHONPATH}"
 else
   echo "[rs-detect] missing .venv312 or .venv" >&2
   exit 1
 fi
+unset _EXTRA_PP _sib _p
 
 URL="http://127.0.0.1:${PORT}/"
 RESTART_FLAG="$ROOT/.rs_detect_restart"
@@ -89,24 +106,34 @@ WEB_DIST="$WEB_DIR/dist"
 
 # Vite + React frontend (same pattern as file-viewer): build → web/dist, FastAPI serves it.
 build_web() {
-  export PATH="${HOME}/.nvm/versions/node/v20.20.2/bin:${PATH}"
+  # Optional nvm (Linux lab images); ignore if absent (Windows Git Bash / plain Node).
   if [ -s "$HOME/.nvm/nvm.sh" ]; then
+    export PATH="${HOME}/.nvm/versions/node/v20.20.2/bin:${PATH}"
     # shellcheck source=/dev/null
     . "$HOME/.nvm/nvm.sh"
     nvm use 20 >/dev/null 2>&1 || true
   fi
-  if ! command -v pnpm >/dev/null 2>&1; then
-    echo "[rs-detect] pnpm not found — cannot build web UI. Install Node 20 + pnpm." >&2
-    return 1
-  fi
   echo "[rs-detect] building web UI (Vite)…"
   (
     cd "$WEB_DIR"
-    if [[ ! -d node_modules/vite ]]; then
-      pnpm install --ignore-scripts
-      pnpm add -D @rollup/rollup-linux-x64-gnu --ignore-scripts >/dev/null 2>&1 || true
+    if command -v pnpm >/dev/null 2>&1; then
+      if [[ ! -d node_modules/vite ]]; then
+        pnpm install --ignore-scripts
+        # Linux CI/lab sometimes need an explicit rollup native binary
+        if [[ "$(uname -s 2>/dev/null || true)" == "Linux" ]]; then
+          pnpm add -D @rollup/rollup-linux-x64-gnu --ignore-scripts >/dev/null 2>&1 || true
+        fi
+      fi
+      pnpm run build
+    elif command -v npm >/dev/null 2>&1; then
+      if [[ ! -d node_modules/vite ]]; then
+        npm install
+      fi
+      npm run build
+    else
+      echo "[rs-detect] pnpm/npm not found — cannot build web UI. Install Node 20+." >&2
+      return 1
     fi
-    pnpm run build
   )
 }
 
@@ -123,6 +150,9 @@ if [[ "$NEED_BUILD" == "1" ]]; then
 else
   echo "[rs-detect] web dist up to date → $WEB_DIST"
 fi
+
+# Cell C URDF + STL from sibling sensors-arm
+python "$ROOT/scripts/ensure_arm_assets.py" || echo "[rs-detect] WARN: arm URDF assets missing" >&2
 
 echo "[rs-detect] root=$ROOT"
 echo "[rs-detect] python=$(command -v python) ($(python -c 'import sys; print(sys.version.split()[0])'))"

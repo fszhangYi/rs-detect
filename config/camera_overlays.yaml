@@ -13,15 +13,16 @@ cameras:
   enabled: true
   opacity: 0.72
   offset_m:
-  - 0.009
-  - 0.787
-  - 0.728
+  - 0.27515111
+  - 0.78747459
+  - 0.72743834
   offset_rpy_deg:
-  - 180
-  - -1.5
-  - 89.5
+  - -170.36575547
+  - -1.38415982
+  - -98.81303296
   seed_med_mm: null
-  align_method: user_manual
+  align_method: from_extrinsics_d435_T
+  aligned_at: '2026-11-18'
 - id: d435_b
   label: D435 · B
   model: d435

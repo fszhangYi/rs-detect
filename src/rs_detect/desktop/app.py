@@ -36,6 +36,10 @@ from qfluentwidgets import (
     TextEdit,
 )
 
+from rs_detect.paths import ensure_workspace_imports
+
+ensure_workspace_imports()
+
 from rs_detect.service import DetectService, get_service
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")

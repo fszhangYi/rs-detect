@@ -24,6 +24,33 @@ from rs_detect.paths import ROOT, YOLO_CONFIG_PATH
 
 logger = logging.getLogger(__name__)
 
+
+def _stop_train_proc(proc: subprocess.Popen, *, hard: bool) -> None:
+    """Terminate training subprocess (Linux process-group or Windows process)."""
+    if proc.poll() is not None:
+        return
+    if sys.platform == "win32":
+        try:
+            if hard:
+                proc.kill()
+            else:
+                proc.terminate()
+        except Exception:  # noqa: BLE001
+            pass
+        return
+    sig = signal.SIGKILL if hard else signal.SIGTERM
+    try:
+        os.killpg(proc.pid, sig)
+    except Exception:  # noqa: BLE001
+        try:
+            if hard:
+                proc.kill()
+            else:
+                proc.terminate()
+        except Exception:  # noqa: BLE001
+            pass
+
+
 DEFAULT_TASK = "segment"
 DEFAULT_MODEL = "models/yolo11n-seg.pt"
 DEFAULT_DATA = "data/yolo_seg/dataset.yaml"
@@ -451,24 +478,12 @@ class YoloTrainManager:
                 return self.status()
             self._state = "stopped"
             self._log.append(f"[{_utc_iso()}] stop requested")
-            try:
-                os.killpg(proc.pid, signal.SIGTERM)
-            except Exception:  # noqa: BLE001
-                try:
-                    proc.terminate()
-                except Exception:  # noqa: BLE001
-                    pass
+            _stop_train_proc(proc, hard=False)
         # Wait briefly outside lock
         try:
             proc.wait(timeout=8)
         except Exception:  # noqa: BLE001
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except Exception:  # noqa: BLE001
-                try:
-                    proc.kill()
-                except Exception:  # noqa: BLE001
-                    pass
+            _stop_train_proc(proc, hard=True)
         with self._lock:
             self._finished_at = self._finished_at or _utc_iso()
             return self.status()

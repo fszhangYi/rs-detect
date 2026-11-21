@@ -17,8 +17,10 @@
     "urdf-loader": "^0.12.5"
   },
   "devDependencies": {
-    "@rollup/rollup-linux-x64-gnu": "^4.68.3",
     "@vitejs/plugin-react": "^4.3.4",
     "vite": "^5.4.14"
+  },
+  "optionalDependencies": {
+    "@rollup/rollup-linux-x64-gnu": "^4.68.3"
   }
 }

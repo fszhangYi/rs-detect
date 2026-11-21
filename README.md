@@ -45,38 +45,71 @@ D435（场景）粗定位 ──► 腕部到位 ──► D405 精定位 / 多�
 
 ## 快速开始
 
+### Linux（原环境）
+
 ```bash
 git clone git@github.com:fszhangYi/rs-detect.git
 cd rs-detect
 
 python3 -m venv .venv && source .venv/bin/activate
 pip install -U pip
-pip install -e .
+pip install -e ".[desktop]"
+# 有 RealSense 时再加：pip install -e ".[realsense]"
+# YOLO：pip install -e ".[yolo]"
 
-# 可选：YOLO
-# pip install -e ".[yolo]"
-
-# Web UI（约 3 秒后自动打开浏览器）
 ./start_web.sh
-./start_web.sh -p 6666          # 指定端口
-# → http://127.0.0.1:8787/
+./start_web.sh -p 6666
+./start_desktop.sh          # 需 DISPLAY；默认 QT_QPA_PLATFORM=xcb
+```
 
-# 桌面 Fluent UI（需 DISPLAY）
-./start_desktop.sh
+### Windows（本仓兼容）
+
+策略见下文「跨平台兼容」：无 RealSense 时自动 Mock；`sensors` / `sensors-arm` 与本仓同级即可被自动加入 `sys.path`。
+
+```powershell
+cd rs-detect
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -U pip
+pip install -e .
+# 桌面 UI：pip install -e ".[desktop]"
+# 实机相机：pip install -e ".[realsense]"   # 需已装 Intel RealSense SDK
+
+# 前端（Node 20+；有 pnpm 更好，否则 npm）
+cd web; npm install; npm run build; cd ..
+
+.\start_web.ps1                 # 默认 http://127.0.0.1:8787/
+.\start_web.ps1 -Port 6666
+.\start_web.ps1 -NoBrowser
+.\start_desktop.ps1             # 需先装 [desktop]
 ```
 
 前端热更新（API 代理到 8787）：
 
 ```bash
-cd web && pnpm install && pnpm run dev   # http://127.0.0.1:5174/
+cd web && pnpm install && pnpm run dev   # 或 npm install && npm run dev
+# → http://127.0.0.1:5174/
 ```
 
 | 环境变量 | 默认 | 说明 |
 |----------|------|------|
-| `RS_DETECT_WEB_HOST` | `0.0.0.0` | Web 绑定地址 |
+| `RS_DETECT_WEB_HOST` | Linux `0.0.0.0` / Win 脚本 `127.0.0.1` | Web 绑定地址 |
 | `RS_DETECT_WEB_PORT` | `8787` | Web 端口 |
 | `RS_DETECT_OPEN_BROWSER` | `1` | 启动后自动打开浏览器（`0` 关闭） |
-| `RS_DETECT_WEB_REBUILD` | `0` | `1` 强制 `pnpm run build` |
+| `RS_DETECT_WEB_REBUILD` | `0` | `1` 强制重建前端 |
+
+### 跨平台兼容（策略）
+
+| 问题（Linux 仓常见） | 做法 |
+|----------------------|------|
+| 只有 `.sh` 启动器 | 增加 `start_web.ps1` / `start_desktop.ps1`；`.sh` 仍保留给 Linux |
+| 硬编码 `/home/ubuntu/autodl-tmp/...` | Python `ensure_workspace_imports()` + 启动器按**同级目录**找 `sensors` / `sensors-arm` |
+| `pyrealsense2` 装不上 / 无相机 | 改为 optional extra `[realsense]`；扫描失败自动 **Mock D405/D435** |
+| PyQt / Fluent 拖垮 Web 安装 | 改为 optional `[desktop]`；Web 只用 FastAPI |
+| `rollup-linux-x64-gnu` 锁死前端 | 挪到 `optionalDependencies`；Windows 用 npm/pnpm 本机 rollup |
+| `QT_QPA_PLATFORM=xcb` | 仅 Linux 默认；Windows 不设，走 Qt windows 插件 |
+| `os.killpg` 停训练 | Windows 用 `terminate`/`kill`；Linux 仍用进程组 |
+| 无 `pnpm` | 启动器回退 `npm install` / `npm run build` |
 
 常用入口：
 

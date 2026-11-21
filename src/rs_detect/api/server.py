@@ -25,7 +25,11 @@ from rs_detect.paths import (
     WEB_DIST,
     WEB_STATIC,
     ensure_dirs,
+    ensure_workspace_imports,
 )
+
+ensure_workspace_imports()
+
 from rs_detect.service import get_service
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -101,11 +105,15 @@ def _schedule_process_exit(*, restart: bool, delay_s: float = 0.45) -> None:
                 RESTART_FLAG_PATH.write_text("1\n", encoding="utf-8")
             except Exception:  # noqa: BLE001
                 logger.exception("failed to write restart flag")
-        # Prefer SIGTERM so uvicorn can wind down; fall back to hard exit
+        # Prefer SIGTERM so uvicorn can wind down; fall back to hard exit.
+        # On Windows SIGTERM may be unavailable / ignored — use _exit.
         try:
-            os.kill(os.getpid(), signal.SIGTERM)
+            if hasattr(signal, "SIGTERM"):
+                os.kill(os.getpid(), signal.SIGTERM)
+                return
         except Exception:  # noqa: BLE001
-            os._exit(0)
+            pass
+        os._exit(0)
 
     threading.Thread(target=_worker, daemon=True, name="rs-detect-exit").start()
 
@@ -908,6 +916,17 @@ def _default_scene_overlay() -> Dict[str, Any]:
     }
 
 
+def _scene_overlay_local_path(url: str) -> Optional[Path]:
+    """Map /assets/scene/... URL to web/assets/scene/... on disk."""
+    u = str(url or "").split("?", 1)[0].strip()
+    if not u.startswith("/assets/"):
+        return None
+    rel = u[len("/assets/") :].lstrip("/")
+    if not rel:
+        return None
+    return WEB_ASSETS / Path(rel)
+
+
 def _load_scene_overlay() -> Dict[str, Any]:
     import yaml
 
@@ -927,6 +946,22 @@ def _load_scene_overlay() -> Dict[str, Any]:
             data.setdefault("notes", pj.get("notes"))
         except Exception:  # noqa: BLE001
             pass
+
+    # Large cell CAD STL is optional / often gitignored. Missing file → disable overlay
+    # so the Arm tab does not spam STLLoader 404 warnings on Windows clones.
+    local = _scene_overlay_local_path(str(data.get("url") or ""))
+    if local is not None and not local.is_file():
+        data["enabled"] = False
+        data["asset_missing"] = True
+        data["asset_path"] = str(local)
+        data["asset_hint"] = (
+            "Place g26562-01-00_asm.stl under web/assets/scene/ "
+            "(or run: python scripts/prepare_scene_overlay.py --src <path-to.stl>), "
+            "then set enabled: true in config/scene_overlay.yaml."
+        )
+    else:
+        data["asset_missing"] = False
+
     data["config_path"] = str(SCENE_OVERLAY_PATH.relative_to(ROOT))
     return data
 
@@ -1095,6 +1130,26 @@ def api_arm_model():
     return get_service().arm.model_descriptor()
 
 
+@app.get("/api/arm/eoat")
+def api_arm_eoat_get():
+    """List EOAT packages (cellc / cellc_m) and the active selection."""
+    return get_service().arm.eoat_status()
+
+
+class ArmEoatBody(BaseModel):
+    eoat_id: str
+    persist: bool = True
+
+
+@app.put("/api/arm/eoat")
+def api_arm_eoat_put(body: ArmEoatBody):
+    """Switch Cell C EOAT URDF (cellc ↔ cellc_m)."""
+    try:
+        return get_service().arm.set_eoat(body.eoat_id, persist=body.persist)
+    except Exception as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
 class ArmDryRunBody(BaseModel):
     dry_run: bool = True
     persist: bool = True
@@ -1238,7 +1293,9 @@ _mount_frontend()
 
 
 def main() -> None:
-    uvicorn.run("rs_detect.api.server:app", host="0.0.0.0", port=8787, reload=False)
+    host = os.environ.get("RS_DETECT_WEB_HOST", "127.0.0.1")
+    port = int(os.environ.get("RS_DETECT_WEB_PORT", "8787"))
+    uvicorn.run("rs_detect.api.server:app", host=host, port=port, reload=False)
 
 
 if __name__ == "__main__":

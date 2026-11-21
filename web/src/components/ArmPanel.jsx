@@ -13,6 +13,11 @@ import { armPreload, preloadArmAssets } from '../lib/armPreload.js';
 const { Text } = Typography;
 const { TextArea } = Input;
 
+/** Cell C EFG prismatic finger (m). Same as sensors-arm viz grip-open. */
+const GRIP_OPEN_JOINT = "left_finger_joint";
+const GRIP_OPEN_MIMIC = "right_finger_joint";
+const GRIP_OPEN_DEFAULT_HI_M = 0.033;
+
 function clampRound(v, min, max, step) {
   const s = Number(step);
   const stepSafe = Number.isFinite(s) && s > 0 ? s : 0.001;
@@ -22,6 +27,34 @@ function clampRound(v, min, max, step) {
   x = Math.min(max, Math.max(min, x));
   const decimals = Math.min(8, Math.max(0, Math.ceil(-Math.log10(stepSafe) + 1e-12)));
   return Number(x.toFixed(decimals));
+}
+
+/** 4×4 T_base_cam → {offset_m, offset_rpy_deg} for camera CAD (Three.js XYZ / scipy xyz). */
+function poseFromMat4(T) {
+  if (!Array.isArray(T) || T.length < 3) {
+    return { offset_m: [0, 0, 0], offset_rpy_deg: [0, 0, 0] };
+  }
+  const m00 = Number(T[0][0]), m01 = Number(T[0][1]), m02 = Number(T[0][2]);
+  const m10 = Number(T[1][0]), m11 = Number(T[1][1]), m12 = Number(T[1][2]);
+  const m20 = Number(T[2][0]), m21 = Number(T[2][1]), m22 = Number(T[2][2]);
+  const sy = Math.sqrt(m00 * m00 + m10 * m10);
+  let roll; let pitch; let yaw;
+  if (sy > 1e-8) {
+    roll = Math.atan2(m21, m22);
+    pitch = Math.atan2(-m20, sy);
+    yaw = Math.atan2(m10, m00);
+  } else {
+    roll = Math.atan2(-m12, m11);
+    pitch = Math.atan2(-m20, sy);
+    yaw = 0;
+  }
+  const offset_m = [
+    Number(T[0][3]) || 0,
+    Number(T[1][3]) || 0,
+    Number(T[2][3]) || 0,
+  ];
+  const offset_rpy_deg = [roll, pitch, yaw].map((v) => (Number.isFinite(v) ? (v * 180) / Math.PI : 0));
+  return { offset_m, offset_rpy_deg };
 }
 
 function NudgeSliderRow({
@@ -150,6 +183,13 @@ export default function ArmPanel({ active }) {
   const liveJointsRef = useRef([0, 0, 0, 0, 0, 0]);
   const previewJointsRef = useRef([0, 0, 0, 0, 0, 0]);
   const [model, setModel] = useState(null);
+  const [eoatId, setEoatId] = useState("cellc");
+  const [eoatCatalog, setEoatCatalog] = useState([]);
+  const [eoatBusy, setEoatBusy] = useState(false);
+  const [gripOpenM, setGripOpenM] = useState(0);
+  const gripOpenMRef = useRef(0);
+  const [gripOpenCapable, setGripOpenCapable] = useState(false);
+  const [gripOpenHiM, setGripOpenHiM] = useState(GRIP_OPEN_DEFAULT_HI_M);
   const [status, setStatus] = useState(null);
   const [joints, setJoints] = useState([0, 0, 0, 0, 0, 0]); // slider / preview target
   const [ghostVisible, setGhostVisible] = useState(false);
@@ -199,6 +239,80 @@ export default function ArmPanel({ active }) {
     return side === "min" ? -Math.PI : Math.PI;
   };
 
+  const gripperOpenJoint = (robotRoot) => {
+    const jointsMap = robotRoot && robotRoot.joints;
+    if (!jointsMap) return null;
+    const j = jointsMap[GRIP_OPEN_JOINT];
+    if (!j || typeof j.setJointValue !== "function") return null;
+    const t = String(j.jointType || j.type || "").toLowerCase();
+    if (t && t !== "prismatic") return null;
+    return j;
+  };
+
+  const applyGripperOpeningTo = (robotRoot, meters) => {
+    const j = gripperOpenJoint(robotRoot);
+    if (!j) return false;
+    const lo = (j.limit && Number.isFinite(Number(j.limit.lower))) ? Number(j.limit.lower) : 0;
+    const hi = (j.limit && Number.isFinite(Number(j.limit.upper)))
+      ? Number(j.limit.upper)
+      : GRIP_OPEN_DEFAULT_HI_M;
+    let v = Number(meters);
+    if (!Number.isFinite(v)) v = lo;
+    v = Math.max(lo, Math.min(hi, v));
+    j.setJointValue(v);
+    const jr = robotRoot.joints && robotRoot.joints[GRIP_OPEN_MIMIC];
+    if (jr && typeof jr.setJointValue === "function") jr.setJointValue(v);
+    if (robotRoot.updateMatrixWorld) robotRoot.updateMatrixWorld(true);
+    return true;
+  };
+
+  const applyGripperOpening = () => {
+    const v = gripOpenMRef.current;
+    const t = threeRef.current || {};
+    if (t.robot) applyGripperOpeningTo(t.robot, v);
+    if (t.ghost) applyGripperOpeningTo(t.ghost, v);
+  };
+
+  const syncGripperOpenFromRobot = (robotRoot) => {
+    const j = gripperOpenJoint(robotRoot);
+    if (!j) {
+      setGripOpenCapable(false);
+      return false;
+    }
+    const lo = (j.limit && Number.isFinite(Number(j.limit.lower))) ? Number(j.limit.lower) : 0;
+    const hi = (j.limit && Number.isFinite(Number(j.limit.upper)))
+      ? Number(j.limit.upper)
+      : GRIP_OPEN_DEFAULT_HI_M;
+    setGripOpenCapable(true);
+    setGripOpenHiM(hi);
+    let cur = gripOpenMRef.current;
+    if (!Number.isFinite(cur)) cur = lo;
+    cur = Math.max(lo, Math.min(hi, cur));
+    gripOpenMRef.current = cur;
+    setGripOpenM(cur);
+    return true;
+  };
+
+  /** Grasp total jaw width (m) → single-side prismatic finger (≈ total / 2). */
+  const setGripOpenFromTotalWidth = (totalWidthM) => {
+    const total = Number(totalWidthM);
+    if (!Number.isFinite(total)) return;
+    const hi = Number.isFinite(gripOpenHiM) ? gripOpenHiM : GRIP_OPEN_DEFAULT_HI_M;
+    const side = Math.max(0, Math.min(hi, total * 0.5));
+    gripOpenMRef.current = side;
+    setGripOpenM(side);
+    applyGripperOpening();
+  };
+
+  const onGripOpenMm = (mm) => {
+    const hi = Number.isFinite(gripOpenHiM) ? gripOpenHiM : GRIP_OPEN_DEFAULT_HI_M;
+    const v = Math.max(0, Math.min(hi, Number(mm) / 1000));
+    if (!Number.isFinite(v)) return;
+    gripOpenMRef.current = v;
+    setGripOpenM(v);
+    applyGripperOpening();
+  };
+
   const paintJointsOn = (robot, j, mdl) => {
     const m = mdl || modelRef.current;
     if (!robot || !robot.joints || !m || !Array.isArray(j)) return;
@@ -220,12 +334,14 @@ export default function ArmPanel({ active }) {
 
   const paintLive = (j, mdl) => {
     paintJointsOn(threeRef.current.robot, j, mdl);
+    applyGripperOpening();
   };
 
   const paintGhost = (j, mdl) => {
     const g = threeRef.current.ghost;
     if (!g) return;
     paintJointsOn(g, j, mdl);
+    applyGripperOpening();
   };
 
   /** Apply cross-tab ghost target (e.g. Grasp S0 pose → IK joints). */
@@ -235,6 +351,9 @@ export default function ArmPanel({ active }) {
     previewJointsRef.current = q;
     setJoints(q);
     setGhostShown(true);
+    if (payload.gripper_width_m != null) {
+      setGripOpenFromTotalWidth(payload.gripper_width_m);
+    }
     paintGhost(q);
     if (Array.isArray(payload.xyzrpy) && payload.xyzrpy.length >= 3) {
       setTcpMarker(payload.xyzrpy);
@@ -607,6 +726,7 @@ export default function ArmPanel({ active }) {
     if (st.model) {
       modelRef.current = st.model;
       setModel(st.model);
+      if (st.model.eoat_id) setEoatId(String(st.model.eoat_id));
     }
     if (st.joints_rad) {
       liveJointsRef.current = st.joints_rad.slice();
@@ -622,12 +742,61 @@ export default function ArmPanel({ active }) {
     setTcpMarker(st.cartesian_xyzrpy);
   };
 
+  const refreshEoatCatalog = async () => {
+    const data = await api("/api/arm/eoat");
+    const items = Array.isArray(data?.catalog) ? data.catalog : [];
+    setEoatCatalog(items);
+    if (data?.eoat_id) setEoatId(String(data.eoat_id));
+    if (data?.model) {
+      modelRef.current = data.model;
+      setModel(data.model);
+    }
+    return data;
+  };
+
+  const switchEoat = async (nextId) => {
+    if (!nextId || nextId === eoatId) return;
+    setEoatBusy(true);
+    try {
+      const data = await api("/api/arm/eoat", {
+        method: "PUT",
+        body: JSON.stringify({ eoat_id: nextId, persist: true }),
+      });
+      const mdl = data?.model
+        || (data?.eoat
+          ? {
+              ...(modelRef.current || {}),
+              urdf: data.eoat.urdf,
+              eoat_id: nextId,
+              tcp_xyz: data.eoat.tcp_xyz,
+            }
+          : null);
+      if (data?.eoat_id) setEoatId(String(data.eoat_id));
+      if (Array.isArray(data?.catalog)) setEoatCatalog(data.catalog);
+      if (mdl) {
+        modelRef.current = mdl;
+        setModel(mdl);
+        await preloadArmAssets({ force: true, model: mdl });
+        loadUrdf(mdl);
+        message.success(`末端工装已切换为 ${nextId}`);
+      }
+    } catch (e) {
+      message.error(String(e.message || e));
+    } finally {
+      setEoatBusy(false);
+    }
+  };
+
   const mountUrdfInstance = (arm, r, asGhost) => {
     r.rotation.x = -Math.PI / 2;
     if (arm.mirror_y) r.scale.y = -1;
     const rpy = arm.gripper_rpy;
     if (rpy && r.links) {
-      const link = r.links["gripper_centor_link"] || r.links["gripper_center_link"];
+      const link = r.links.gripper_base_link
+        || r.links.gripper_centor_link
+        || r.links.gripper_center_link
+        || r.links.ee_link
+        || null;
       if (link) {
         const extra = new THREE.Euler(rpy[0] || 0, rpy[1] || 0, rpy[2] || 0, "XYZ");
         link.quaternion.multiply(new THREE.Quaternion().setFromEuler(extra));
@@ -856,7 +1025,20 @@ export default function ArmPanel({ active }) {
         let geom = camGeomCacheRef.current[url];
         if (!geom) {
           geom = await new Promise((resolve, reject) => {
-            loader.load(url, resolve, undefined, reject);
+            loader.load(
+              url,
+              resolve,
+              undefined,
+              (err) => {
+                const msg = String(err?.message || err || "STL load failed");
+                reject(new Error(
+                  `${url}: ${msg}`
+                  + (msg.includes("DataView")
+                    ? "（常见原因：web/assets/realsense/*.stl 仍是 Linux symlink 占位文本，请跑 scripts/ensure_realsense_assets.py）"
+                    : ""),
+                ));
+              },
+            );
           });
           geom.computeVertexNormals();
           geom.__rsShared = true;
@@ -913,6 +1095,61 @@ export default function ArmPanel({ active }) {
       applyCamMatrices(saved, activeCamId);
       message.success("相机叠加已保存（未改 URDF）");
       return saved;
+    } catch (e) {
+      message.error(String(e.message || e));
+      return null;
+    }
+  };
+
+  /** Apply extrinsics.d435.T (T_base_cam) onto the active / first D435 CAD overlay. */
+  const syncD435FromExtrinsics = async ({ persist = true } = {}) => {
+    try {
+      const ext = await api("/api/extrinsics");
+      const T = ext?.d435?.T;
+      if (!Array.isArray(T) || T.length < 4) {
+        message.warning("extrinsics.d435.T 无效");
+        return null;
+      }
+      const pose = poseFromMat4(T);
+      const overlayId = ext?.d435?.source?.camera_overlay_id || "d435_a";
+      const cfg = camOverlayCfg || { enabled: true, cameras: [] };
+      let cameras = Array.isArray(cfg.cameras) ? [...cfg.cameras] : [];
+      let targetId = overlayId;
+      if (!cameras.some((c) => c.id === targetId)) {
+        const hit = cameras.find((c) => c.model === "d435" || String(c.id || "").startsWith("d435"));
+        targetId = hit?.id || activeCamId || cameras[0]?.id;
+      }
+      if (!targetId) {
+        message.warning("无 D435 相机叠加项");
+        return null;
+      }
+      cameras = cameras.map((c) => {
+        if (c.id !== targetId) return c;
+        return {
+          ...c,
+          enabled: true,
+          offset_m: pose.offset_m.map((v) => Number(v.toFixed(8))),
+          offset_rpy_deg: pose.offset_rpy_deg.map((v) => Number(v.toFixed(8))),
+          align_method: "from_extrinsics_d435_T",
+        };
+      });
+      const next = { ...cfg, enabled: true, cameras };
+      setCamOverlayCfg(next);
+      setActiveCamId(targetId);
+      camOverlayVisibleRef.current = true;
+      setCamOverlayVisible(true);
+      if (!threeRef.current?.cameraOverlays) {
+        await loadCameraOverlays(next, { selectedId: targetId, visible: true });
+      } else {
+        applyCamMatrices(next, targetId, { visible: true });
+      }
+      if (persist) {
+        await saveCamOverlayCfg(next);
+        message.success(`已按 extrinsics.d435 放置 ${targetId}`);
+      } else {
+        message.success(`已预览 ${targetId}（未保存）`);
+      }
+      return next;
     } catch (e) {
       message.error(String(e.message || e));
       return null;
@@ -1201,7 +1438,17 @@ export default function ArmPanel({ active }) {
     setHint((armPreload.ready ? "使用预缓存加载 " : "加载 ") + pathOnly + " …");
 
     // Shared across live+ghost loads: parse STL once, reuse BufferGeometry.
-    if (!t.meshGeomCache) t.meshGeomCache = Object.create(null);
+    // Bust geometry cache when URDF/EOAT version changes (mesh files keep same names).
+    const meshVer = (() => {
+      const q = urdfUrl.split("?")[1] || "";
+      const m = /(?:^|&)v=([^&]+)/.exec(q);
+      return (m && m[1]) || "1";
+    })();
+    if (!t.meshGeomCache || t.meshGeomCacheVer !== meshVer) {
+      t.meshGeomCache = Object.create(null);
+      t.meshGeomWaiters = Object.create(null);
+      t.meshGeomCacheVer = meshVer;
+    }
     if (!t.meshGeomWaiters) t.meshGeomWaiters = Object.create(null);
     const geomCache = t.meshGeomCache;
     const geomWaiters = t.meshGeomWaiters;
@@ -1304,6 +1551,7 @@ export default function ArmPanel({ active }) {
     const finishRobot = (r, asGhost) => {
       if (token !== t.loadToken) return;
       mountUrdfInstance(arm, r, asGhost);
+      syncGripperOpenFromRobot(r);
       if (asGhost) {
         t.ghost = r;
         t.scene.add(r);
@@ -1322,6 +1570,7 @@ export default function ArmPanel({ active }) {
         paintLive(liveJointsRef.current, arm);
         setHint((arm.label || arm.id) + " · " + arm.model + " · 拖拽旋转 · Ctrl+↑↓ 以鼠标为中心缩放");
       }
+      applyGripperOpening();
     };
 
     // After all STLs for both arms settle, ensure ghost mats stuck (async attach race).
@@ -1382,7 +1631,8 @@ export default function ArmPanel({ active }) {
       setHint("初始化 3D 场景…");
       try {
         setPreloadPct(armPreload.ready ? 100 : 30);
-        await preloadArmAssets();
+        // Force re-fetch STLs — EOAT mesh names are stable; blob/HTTP cache otherwise sticks.
+        await preloadArmAssets({ force: true });
         setPreloadPct(100);
       } catch (e) {
         setHint("预加载失败: " + (e.message || e) + "（仍尝试直接加载）");
@@ -1510,6 +1760,11 @@ export default function ArmPanel({ active }) {
         const live = await api("/api/arm/state");
         if (cancelled) return;
         applyStatus(live);
+        try {
+          await refreshEoatCatalog();
+        } catch (eoatErr) {
+          console.warn("[eoat] catalog", eoatErr);
+        }
         loadUrdf(live.model || armPreload.model);
         try {
           const ov = await api("/api/scene_overlay");
@@ -1721,6 +1976,55 @@ export default function ArmPanel({ active }) {
                 : `LIVE · sensors arm_cs_write · ${model?.robot_ip || status?.model?.robot_ip || "192.168.1.200"}`}
             </Text>
           </div>
+          <div className="arm-section-title">末端工装 EOAT（URDF）</div>
+          <div className="arm-toolbar" style={{ marginBottom: 12, alignItems: "center" }}>
+            <Select
+              style={{ minWidth: 240 }}
+              loading={eoatBusy}
+              value={eoatId}
+              options={(eoatCatalog.length
+                ? eoatCatalog
+                : [
+                    { id: "cellc", label: "cellc · EFG-C65 + D405" },
+                    { id: "cellc_m", label: "cellc_m · digital-model/cellc_m" },
+                  ]
+              ).map((e) => ({
+                value: e.id,
+                label: e.label || e.id,
+              }))}
+              onChange={(v) => switchEoat(v)}
+            />
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {model?.urdf ? String(model.urdf).split("/").pop() : "—"}
+            </Text>
+          </div>
+          <div className="arm-grip-open-block" style={{ marginBottom: 12 }}>
+            <div className="arm-section-title">夹爪开度（可视化）</div>
+            <div className="arm-joint-row arm-grip-open-row">
+              <span className="lab">闭</span>
+              <Slider
+                style={{ margin: 0 }}
+                disabled={!gripOpenCapable}
+                min={0}
+                max={Math.max(0.1, (Number(gripOpenHiM) || GRIP_OPEN_DEFAULT_HI_M) * 1000)}
+                step={0.5}
+                value={Math.max(0, Math.min(
+                  (Number(gripOpenHiM) || GRIP_OPEN_DEFAULT_HI_M) * 1000,
+                  (Number(gripOpenM) || 0) * 1000,
+                ))}
+                onChange={onGripOpenMm}
+              />
+              <span className="lab">开</span>
+              <span className="arm-joint-val">
+                {((Number(gripOpenM) || 0) * 1000).toFixed(1)} mm
+              </span>
+            </div>
+            <Text type="secondary" style={{ display: "block", fontSize: 12, marginTop: 4 }}>
+              {gripOpenCapable
+                ? `单侧 0…${((Number(gripOpenHiM) || GRIP_OPEN_DEFAULT_HI_M) * 1000).toFixed(0)} mm（总开度约 ×2）；仅可视化。`
+                : "等待 URDF 加载 left_finger_joint（cellc / cellc_m）…"}
+            </Text>
+          </div>
           <div className="arm-section-title">场景 STL（独立于 URDF）</div>
           <div className="arm-toolbar" style={{ marginBottom: 8, alignItems: "center" }}>
             <Switch
@@ -1930,14 +2234,24 @@ export default function ArmPanel({ active }) {
                       />
                     );
                   })}
-                  <Button
-                    size="small"
-                    type="primary"
-                    style={{ marginTop: 6 }}
-                    onClick={() => saveCamOverlayCfg(camOverlayCfg)}
-                  >
-                    保存相机对齐
-                  </Button>
+                  <Space size={8} style={{ marginTop: 6 }} wrap>
+                    <Button
+                      size="small"
+                      type="primary"
+                      onClick={() => saveCamOverlayCfg(camOverlayCfg)}
+                    >
+                      保存相机对齐
+                    </Button>
+                    {(activeCam?.model === "d435" || String(activeCam?.id || "").startsWith("d435")) && (
+                      <Button
+                        size="small"
+                        loading={camOverlayBusy}
+                        onClick={() => syncD435FromExtrinsics({ persist: true })}
+                      >
+                        从 D435 外参同步
+                      </Button>
+                    )}
+                  </Space>
                 </>
               )}
             </div>
@@ -2381,6 +2695,27 @@ export default function ArmPanel({ active }) {
               </div>
             );
           })}
+          <Divider style={{ margin: "10px 0 8px" }} />
+          <div className="arm-section-title" style={{ marginBottom: 6 }}>夹爪开度</div>
+          <div className="arm-joint-row arm-grip-open-row">
+            <span className="lab">闭</span>
+            <Slider
+              style={{ margin: 0 }}
+              disabled={!gripOpenCapable}
+              min={0}
+              max={Math.max(0.1, (Number(gripOpenHiM) || GRIP_OPEN_DEFAULT_HI_M) * 1000)}
+              step={0.5}
+              value={Math.max(0, Math.min(
+                (Number(gripOpenHiM) || GRIP_OPEN_DEFAULT_HI_M) * 1000,
+                (Number(gripOpenM) || 0) * 1000,
+              ))}
+              onChange={onGripOpenMm}
+            />
+            <span className="lab">开</span>
+            <span className="arm-joint-val">
+              {((Number(gripOpenM) || 0) * 1000).toFixed(1)} mm
+            </span>
+          </div>
         </Card>
       </div>
 

@@ -208,6 +208,12 @@ body { margin: 0; background: #f5f5f5; }
 .arm-joint-row.with-nudge {
   grid-template-columns: 36px 1fr auto 64px;
 }
+.arm-joint-row.arm-grip-open-row {
+  grid-template-columns: 28px 1fr 28px 64px;
+}
+.arm-grip-open-block .arm-section-title {
+  margin-bottom: 6px;
+}
 .arm-joint-row .lab {
   font-size: 12px;
   color: #595959;

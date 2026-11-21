@@ -1,5 +1,5 @@
 version: 1
-dry_run: true
+dry_run: false
 arm:
   id: arm-c
   label: Cell C · CS66 G26562
@@ -28,11 +28,10 @@ arm:
   rtsi_output_recipe: rtsi/output_recipe.txt
   rtsi_input_recipe: rtsi/input_recipe.txt
   rtsi_frequency: 125.0
-  # Flange → fingertip pads (EFG body ends ~0.117 = 指根; fingertip STL tip ~0.192).
   tcp_xyz:
   - 0.0
   - 0.0
-  - 0.192
+  - 0.337
   home_joints_rad:
   - 3.1980228625405087
   - -1.9760219324365658
@@ -66,7 +65,27 @@ arm:
   - 0.0
   - 0.0
   - 3.141592653589793
-  urdf: /assets/models/cs66/cs66_cell_c.urdf?v=cell-c-rs-detect-1
+  eoat_id: cellc_m
+  urdf: /assets/models/cs66/cs66_cell_c_m.urdf?v=cellc-m-2
+eoat_catalog:
+  cellc:
+    id: cellc
+    label: cellc · EFG-C65 + D405
+    urdf: /assets/models/cs66/cs66_cell_c.urdf?v=cellc-1
+    tcp_xyz:
+    - 0.0
+    - 0.0
+    - 0.192
+    notes: Current Cell C EOAT (meshes/)
+  cellc_m:
+    id: cellc_m
+    label: cellc_m · digital-model/cellc_m
+    urdf: /assets/models/cs66/cs66_cell_c_m.urdf?v=cellc-m-2
+    tcp_xyz:
+    - 0.0
+    - 0.0
+    - 0.337
+    notes: Parallel EOAT from digital-model/cellc_m (crossed tips; body-only base)
 arm_abs_ramp:
   t_min_s: 0.1
   t_max_s: 8.0

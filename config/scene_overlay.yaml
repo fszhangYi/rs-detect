@@ -8,8 +8,8 @@ align:
   base_in_scene_mm:
   - 487.54
   - 109.64
-  - 12.0
-  yaw_deg: 0.0
+  - 12
+  yaw_deg: 0
   method: user seed + soft-overlap-area gradient (Three.js XYZ Euler)
   confidence: high
   metrics:
@@ -47,3 +47,7 @@ offset_rpy_deg:
 notes: Separate from URDF. CAD mm/Z-up → scale 0.001, subtract arm base, yaw, then
   same Rx(-90°) as robot. Full-resolution STL (no decimation).
 name: g26562 cell scene overlay
+asset_missing: true
+asset_path: C:\Users\user\Desktop\autodl-tmp\rs-detect\web\assets\scene\g26562-01-00_asm.stl
+asset_hint: 'Place g26562-01-00_asm.stl under web/assets/scene/ (or run: python scripts/prepare_scene_overlay.py
+  --src <path-to.stl>), then set enabled: true in config/scene_overlay.yaml.'

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+WORKSPACE = ROOT.parent
 CONFIG_DIR = ROOT / "config"
 DATA_DIR = ROOT / "data"
 CAPTURES_DIR = DATA_DIR / "captures"
@@ -31,3 +33,24 @@ WEB_ASSETS = ROOT / "web" / "assets"
 def ensure_dirs() -> None:
     for p in (CONFIG_DIR, DATA_DIR, CAPTURES_DIR, CAPTURE_DIR, RECORDINGS_DIR, MOCK_DIR, MODELS_DIR):
         p.mkdir(parents=True, exist_ok=True)
+
+
+def sibling_src_dirs() -> list[Path]:
+    """Workspace sibling package roots (sensors / sensors-arm), if present."""
+    found: list[Path] = []
+    for name in ("sensors", "sensors-arm"):
+        p = WORKSPACE / name / "src"
+        if p.is_dir():
+            found.append(p)
+    return found
+
+
+def ensure_workspace_imports() -> None:
+    """Prepend sibling ``sensors`` / ``sensors-arm`` src to ``sys.path`` (Win/Linux).
+
+    Avoids hard-coded AutoDL paths in shell launchers. No-op when siblings missing.
+    """
+    for p in sibling_src_dirs():
+        s = str(p)
+        if s not in sys.path:
+            sys.path.insert(0, s)
