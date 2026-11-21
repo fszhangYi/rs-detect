@@ -45,7 +45,7 @@ offset_rpy_deg:
 - -88.66
 - 0.06
 notes: Separate from URDF. CAD mm/Z-up → scale 0.001, subtract arm base, yaw, then
-  same Rx(-90°) as robot. Full-resolution STL (no decimation).
+  same Rx(-90°) as robot. Full-resolution STL shipped in web/assets/scene/.
 name: g26562 cell scene overlay
 asset_missing: true
 asset_path: C:\Users\user\Desktop\autodl-tmp\rs-detect\web\assets\scene\g26562-01-00_asm.stl
