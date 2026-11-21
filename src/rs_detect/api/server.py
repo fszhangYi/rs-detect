@@ -995,8 +995,9 @@ def api_scene_overlay_put(body: SceneOverlayBody):
         align.update(patch.pop("align"))
         data["align"] = align
     data.update(patch)
-    # strip response-only
-    data.pop("config_path", None)
+    # strip response-only / runtime keys so YAML stays a clean persisted config
+    for _k in ("config_path", "asset_missing", "asset_path", "asset_hint"):
+        data.pop(_k, None)
     SCENE_OVERLAY_PATH.parent.mkdir(parents=True, exist_ok=True)
     SCENE_OVERLAY_PATH.write_text(
         yaml.safe_dump(data, sort_keys=False, allow_unicode=True),

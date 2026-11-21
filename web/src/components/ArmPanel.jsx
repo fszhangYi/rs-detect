@@ -202,6 +202,7 @@ export default function ArmPanel({ active }) {
   const [sceneMarkers, setSceneMarkers] = useState(() => armSceneMarkers.items.slice());
   const [overlayCfg, setOverlayCfg] = useState(null);
   const [overlayVisible, setOverlayVisible] = useState(true);
+  const overlayVisibleRef = useRef(true);
   const [overlayBusy, setOverlayBusy] = useState(false);
   const [camOverlayCfg, setCamOverlayCfg] = useState(null);
   const [camOverlayVisible, setCamOverlayVisible] = useState(true);
@@ -433,6 +434,7 @@ export default function ArmPanel({ active }) {
 
   const setSceneLayerShown = async (show) => {
     const on = !!show;
+    overlayVisibleRef.current = on;
     setOverlayVisible(on);
     if (!overlayCfg) return;
     if (on) {
@@ -892,7 +894,7 @@ export default function ArmPanel({ active }) {
       const group = new THREE.Group();
       group.name = "scene_overlay";
       group.add(mesh);
-      group.visible = overlayVisible;
+      group.visible = overlayVisibleRef.current;
       group.matrixAutoUpdate = false;
       group.matrix.copy(buildOverlayMatrix(cfg));
       group.updateMatrixWorld(true);
@@ -915,7 +917,8 @@ export default function ArmPanel({ active }) {
       setOverlayCfg(saved);
       applyOverlayMatrix(saved);
       if (threeRef.current?.sceneOverlay) {
-        threeRef.current.sceneOverlay.visible = !!saved.enabled && overlayVisible;
+        // Use ref: React state `overlayVisible` is still stale inside this async handler.
+        threeRef.current.sceneOverlay.visible = !!saved.enabled && overlayVisibleRef.current;
         const mesh = threeRef.current.sceneOverlay.children[0];
         if (mesh?.material) {
           mesh.material.opacity = Number(saved.opacity ?? 0.32);
@@ -1770,6 +1773,7 @@ export default function ArmPanel({ active }) {
           const ov = await api("/api/scene_overlay");
           if (cancelled) return;
           setOverlayCfg(ov);
+          overlayVisibleRef.current = !!ov.enabled;
           setOverlayVisible(!!ov.enabled);
           await loadSceneOverlay(ov);
         } catch (ovErr) {
@@ -2033,13 +2037,18 @@ export default function ArmPanel({ active }) {
               checkedChildren="显示"
               unCheckedChildren="隐藏"
               onChange={async (on) => {
+                overlayVisibleRef.current = on;
                 setOverlayVisible(on);
                 const next = { ...(overlayCfg || {}), enabled: on };
                 setOverlayCfg(next);
-                if (on && !threeRef.current?.sceneOverlay) {
-                  await loadSceneOverlay(next);
+                if (on) {
+                  if (!threeRef.current?.sceneOverlay) {
+                    await loadSceneOverlay(next);
+                  } else {
+                    threeRef.current.sceneOverlay.visible = true;
+                  }
                 } else if (threeRef.current?.sceneOverlay) {
-                  threeRef.current.sceneOverlay.visible = on;
+                  threeRef.current.sceneOverlay.visible = false;
                 }
                 await saveOverlayCfg(next);
               }}
