@@ -8,8 +8,8 @@ align:
   base_in_scene_mm:
   - 487.54
   - 109.64
-  - 12.0
-  yaw_deg: 0.0
+  - 12
+  yaw_deg: 0
   method: user seed + soft-overlap-area gradient (Three.js XYZ Euler)
   confidence: high
   metrics:
@@ -45,5 +45,5 @@ offset_rpy_deg:
 - -88.66
 - 0.06
 notes: Separate from URDF. CAD mm/Z-up → scale 0.001, subtract arm base, yaw, then
-  same Rx(-90°) as robot. Full-resolution STL (no decimation).
+  same Rx(-90°) as robot. Full-resolution STL shipped in web/assets/scene/.
 name: g26562 cell scene overlay

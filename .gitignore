@@ -49,6 +49,7 @@ web/_legacy/
 web/assets/models
 web/assets/vendor
 web/assets/scene/*.stl
+!web/assets/scene/g26562-01-00_asm.stl
 
 *.cache
 data/yolo/**/*.cache

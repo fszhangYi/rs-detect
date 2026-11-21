@@ -3,7 +3,7 @@
   "url": "/assets/scene/g26562-01-00_asm.stl",
   "hires_url": "/assets/scene/g26562-01-00_asm.stl",
   "units_of_file": "mm",
-  "notes": "Full-res scene STL. Overlay separate from URDF. Pose restored from user manual fine-tune.",
+  "notes": "Full-res scene STL in repo. Overlay separate from URDF. Pose from manual fine-tune.",
   "enabled": true,
   "opacity": 0.32,
   "color": "#7a93ad",
